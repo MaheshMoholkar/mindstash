@@ -61,7 +61,16 @@ const api = fx.project(
   { 'package.json': '{"name":"api-server"}', 'src/routes/users.ts': 'x', 'src/api/v2/billing.ts': 'x' },
   true,
 );
-fx.project('work/blog', { 'index.md': 'x' }, true);
+fx.write(join(api, '.nvmrc'), '22\n');
+const blog = fx.project('work/blog', { 'index.md': 'x' }, true);
+const cli = fx.project('work/cli-tool', { 'main.go': 'x' }, true);
+fx.memory(blog, 'publishing.md', 'Posts are written in Markdown and published from the main branch.', { description: 'How posts ship' });
+fx.memory(cli, 'release.md', 'Releases are tagged by hand and built by the release workflow.', { description: 'How releases work' });
+// A CLAUDE.md in a plain parent folder: it loads in every project below it.
+fx.write(
+  join(home, 'work', 'CLAUDE.md'),
+  '# Work\n\n- Use the staging database for anything that writes data.\n- Ask before running migrations.\n- Keep the api-server changelog up to date.\n',
+);
 
 fx.write(
   join(fx.claudeDir, 'CLAUDE.md'),
@@ -283,7 +292,9 @@ await session({ live: true }, async (k, t) => {
   await goTo(k, t, 'old-api-endpoints');
   await press(k, ' ');
   await goTo(k, t, 'hackathon-notes');
-  await press(k, ' ', 'd');
+  await press(k, ' ');
+  await goTo(k, t, 'hackathon-notes'); // Space moved the cursor on; keep the long note behind the dialog
+  await press(k, 'd');
   shot('confirm', t);
   await press(k, 'y');
   await tick(300);
@@ -295,7 +306,10 @@ await session({ live: true }, async (k, t) => {
 let html = readFileSync(SITE, 'utf8');
 const missing: string[] = [];
 for (const [name, ansi] of screens) {
-  if (plain(ansi).includes(fx.root)) throw new Error(`Screen "${name}" shows the demo's temp folder; pick another view.`);
+  const leak = plain(ansi)
+    .split('\n')
+    .find((l) => l.includes(fx.root));
+  if (leak) throw new Error(`Screen "${name}" shows the demo's temp folder; pick another view:\n${leak}`);
   const re = new RegExp(`(<!-- screen:${name} -->)[\\s\\S]*?(<!-- /screen:${name} -->)`);
   if (!re.test(html)) missing.push(name);
   html = html.replace(re, (_m, open: string, close: string) => `${open}${toHtml(ansi)}${close}`);
