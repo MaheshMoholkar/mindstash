@@ -133,4 +133,19 @@ describe('full-screen UI', () => {
     expect(existsSync(second)).toBe(false);
     expect(existsSync(first)).toBe(true);
   });
+
+  it('groups a long findings list into project folders', async () => {
+    const repo = fx.project('mono', { 'src/a.ts': 'x' }, true);
+    for (let i = 0; i < 22; i++) fx.memory(repo, `n${i}.md`, `Note ${i} points at \`src/gone/f${i}.ts\` in the repo.`);
+    const { press, frame } = await app();
+    expect(frame()).toContain('▸');
+    expect(frame()).toContain('22 findings');
+    // Move the cursor onto the ~/mono folder, then open it.
+    for (let i = 0; i < 10 && !frame().split('\n').some((l) => l.includes('▌') && l.includes('~/mono')); i++) await press('j');
+    await press(KEY.enter);
+    expect(frame()).toContain('▾');
+    expect(frame()).toContain('└');
+    await press('z', 'M');
+    expect(frame()).not.toContain('└');
+  });
 });

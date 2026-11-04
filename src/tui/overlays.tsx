@@ -60,6 +60,8 @@ export const KEYS: [string, string][] = [
   ['gg  G', 'top / bottom'],
   ['^d  ^u', 'half page down / up'],
   ['h l  ← →', 'focus sidebar · list · detail'],
+  ['⏎  zo zc', 'open / close a project folder'],
+  ['zR  zM', 'open / close all folders'],
   ['Enter', 'open'],
   ['Esc', 'back, clear search or selection'],
   ['Tab', 'switch sidebar / list'],

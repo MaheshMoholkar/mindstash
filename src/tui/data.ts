@@ -36,8 +36,12 @@ export interface Row {
   pair?: Pair;
   group?: Group;
   archived?: Archived;
-  /** memory, skill, instructions, index, scope, pair: picks the row's icon. */
+  /** memory, skill, instructions, index, scope, pair, folder: picks the row's icon. */
   kind?: string;
+  folder?: Folder;
+  /** Indent level: 1 for rows inside a folder. */
+  depth?: number;
+  category?: string;
 }
 
 export const RULE_LABEL: Record<string, string> = {
@@ -215,9 +219,73 @@ export function rowsFor(entry: Entry | undefined, r: ScanResult, pairs: Pair[], 
 /** Files behind a row, for `e` (edit). */
 export function pathsOf(row: Row | undefined, r: ScanResult): string[] {
   if (!row) return [];
+  if (row.folder) return [...new Set(row.folder.children.flatMap((c) => pathsOf(c, r)))];
   if (row.pair) return [...new Set([row.pair.a.path, row.pair.b.path])];
   if (row.archived) return [row.archived.kind === 'skill' ? `${row.archived.to}/SKILL.md` : row.archived.to];
   if (row.item) return [row.item.path];
   if (row.finding) return [...new Set(itemsOf(row.finding, r).map((i) => i.path))];
   return [];
 }
+
+/** A folder row in a grouped findings list: one project's findings. */
+export interface Folder {
+  key: string;
+  label: string;
+  children: Row[];
+  collapsed: boolean;
+}
+
+/**
+ * Turn a flat findings list into folders per project (inside each category, so the All
+ * view's category bands still work). A project with one finding stays a plain row.
+ */
+export function treeRows(rows: Row[], isCollapsed: (key: string, size: number) => boolean): Row[] {
+  const out: Row[] = [];
+  let i = 0;
+  while (i < rows.length) {
+    const cat = rows[i]!.finding?.category ?? '';
+    const block: Row[] = [];
+    while (i < rows.length && (rows[i]!.finding?.category ?? '') === cat) block.push(rows[i++]!);
+    const byScope = new Map<string, Row[]>();
+    for (const r of block) byScope.set(r.secondary, [...(byScope.get(r.secondary) ?? []), r]);
+    for (const [scope, kids] of byScope) {
+      if (kids.length === 1) {
+        out.push({ ...kids[0]!, category: cat, depth: 0 });
+        continue;
+      }
+      const key = `folder:${cat}:${scope}`;
+      const collapsed = isCollapsed(key, kids.length);
+      const rules = new Map<string, number>();
+      for (const k of kids) rules.set(k.tag, (rules.get(k.tag) ?? 0) + 1);
+      const folder: Folder = { key, label: scope || 'global', children: kids, collapsed };
+      out.push({
+        key,
+        kind: 'folder',
+        primary: `${scope || 'global'}`,
+        secondary: `${kids.length} findings`,
+        tag: rules.size === 1 ? [...rules.keys()][0]! : `${rules.size} kinds`,
+        color: kids[0]!.color,
+        category: cat,
+        folder,
+        depth: 0,
+      });
+      if (!collapsed) for (const k of kids) out.push({ ...k, category: cat, depth: 1 });
+    }
+  }
+  return out;
+}
+
+/** What each sidebar entry is, shown in the "About" box under the sidebar. */
+export const ENTRY_HELP: Record<string, string> = {
+  'cat:all': 'Every finding, grouped by type and project. Enter opens a project folder; d / a / i act on the row or the whole folder.',
+  'cat:stale': 'Memories pointing at things that are gone or outdated: deleted projects or files, past events, skills that are no longer installed, old versions.',
+  'cat:scope': 'Notes about one project saved in a parent folder like ~, and CLAUDE.md files that load into many projects. Some can be moved with m.',
+  'cat:similar': 'Near-duplicate memories, and skills installed twice or overlapping. MindStash never merges; open both with e and keep one.',
+  'cat:contradiction': 'Notes your agent checked and found to disagree. Edit one of them so the agent gets one clear instruction.',
+  'cat:relearned': 'Memories that look like ones you deleted with MindStash. The agent may keep re-learning it from somewhere.',
+  'cat:index': 'Loading problems: MEMORY.md over 200 lines, broken or missing index links (L links them back), instruction files that are too big.',
+  'view:browse': 'Every scope (global and each project) with its memories and skills. Open one to delete, archive or edit single items.',
+  'view:checks': 'Pairs of notes that might contradict each other. MindStash only finds them; ask your agent to judge them with /mindstash or $mindstash.',
+  'view:archived': 'Things you archived. They are hidden from the agent but kept in ~/.mindstash. Press R to restore.',
+  'view:cost': 'Tokens that load into every session, per agent and per project: skill descriptions, CLAUDE.md / AGENTS.md and MEMORY.md.',
+};

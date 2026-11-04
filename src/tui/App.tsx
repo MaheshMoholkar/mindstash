@@ -11,7 +11,7 @@ import { loadState, type Pair } from '../core/state.js';
 import { markSeen } from '../core/notify.js';
 import { plural } from '../core/text.js';
 import type { FixKind, ScanContext, ScanResult } from '../core/types.js';
-import { pathsOf, rowsFor, scopeEntries, selectable, sidebarEntries, type Entry, type Row } from './data.js';
+import { ENTRY_HELP, pathsOf, rowsFor, scopeEntries, selectable, sidebarEntries, treeRows, type Entry, type Row } from './data.js';
 import { docFor, editability } from './doc.js';
 import { fuzzy, helpLines, Modal, paletteLines, type PaletteItem } from './overlays.js';
 import { CommandLine, Doc, List, Sidebar, StatusLine, type Mode } from './panes.js';
@@ -68,7 +68,9 @@ export function App(props: AppProps) {
   const [message, setMessage] = useState<Message | undefined>();
   const [sidebarHidden, setSidebarHidden] = useState(props.initialUi?.sidebarHidden ?? false);
   const [fatal, setFatal] = useState<string | null>(null);
-  const vim = useRef({ count: '', g: false });
+  const vim = useRef({ count: '', g: false, z: false });
+  /** Folder keys the user opened or closed (relative to the default). */
+  const [flipped, setFlipped] = useState<Set<string>>(new Set());
 
   const rescan = useCallback(async () => {
     const r = await scan(ctx);
@@ -106,7 +108,14 @@ export function App(props: AppProps) {
   const found = entries.findIndex((e) => e.key === sideKey && selectable(e));
   const entryIdx = found >= 0 ? found : entries.findIndex(selectable);
   const entry: Entry | undefined = scopeEntry ?? entries[entryIdx];
-  const rows = useMemo(() => (result ? rowsFor(entry, result, pairs, query, archived) : []), [entry, result, pairs, query, archived]);
+  const flat = useMemo(() => (result ? rowsFor(entry, result, pairs, query, archived) : []), [entry, result, pairs, query, archived]);
+  // Findings lists group into per-project folders; long lists start collapsed.
+  const foldersOn = entry?.kind === 'category';
+  const collapseByDefault = flat.length > 20 && !query;
+  const rows = useMemo(
+    () => (foldersOn ? treeRows(flat, (k) => (flipped.has(k) ? !collapseByDefault : collapseByDefault)) : flat),
+    [flat, foldersOn, flipped, collapseByDefault],
+  );
   const cur = clamp(cursor, 0, Math.max(0, rows.length - 1));
   const row: Row | undefined = rows[cur];
   const isCost = entry?.kind === 'view' && entry.id === 'cost';
@@ -116,8 +125,13 @@ export function App(props: AppProps) {
   const mw = cols - sw;
   // One spare row: some terminals scroll when the last line is written.
   const bodyH = termRows - 3;
-  const listH = Math.max(6, Math.floor(bodyH * 0.45));
-  const docW = mw - 4;
+  // Wide terminals: list and preview side by side (three columns). Narrow: stacked.
+  const threeCol = mw >= 90;
+  const listW = threeCol ? Math.floor(mw * 0.56) : mw;
+  const prevW = threeCol ? mw - listW : mw;
+  const listH = threeCol ? bodyH : Math.max(6, Math.floor(bodyH * 0.45));
+  const zoomed = focus === 'detail' || isCost;
+  const docW = (zoomed ? mw : prevW) - 4;
 
   const costLines: Line[] = useMemo(() => {
     if (!result || !isCost) return [];
@@ -133,7 +147,7 @@ export function App(props: AppProps) {
     () => (result ? (isCost ? costLines : docFor(row, result, docW, focus === 'detail', fileCursor)) : []),
     [result, row, docW, focus, isCost, costLines, fileCursor],
   );
-  const docHeight = isCost || focus === 'detail' ? bodyH : bodyH - listH;
+  const docHeight = zoomed || threeCol ? bodyH : bodyH - listH;
   const maxOffset = Math.max(0, docLines.length - (docHeight - 2));
   // Files of a multi-file finding, when its detail is open (the file picker).
   const pickFiles = focus === 'detail' && row?.finding && !row.item && result ? itemsOf(row.finding, result) : [];
@@ -154,8 +168,26 @@ export function App(props: AppProps) {
 
   /* ---------------------------------------------------------------- navigation */
 
+  const flip = (key: string) =>
+    setFlipped((s) => {
+      const n = new Set(s);
+      n.has(key) ? n.delete(key) : n.add(key);
+      return n;
+    });
+  const setFolder = (r: Row | undefined, open: boolean) => {
+    if (r?.folder && r.folder.collapsed === open) flip(r.folder.key);
+  };
+  /** Open (or close) every folder: flip all folders whose default differs from the wish. */
+  const allFolders = (open: boolean) => {
+    const keys = treeRows(flat, () => true).filter((r) => r.folder).map((r) => r.key);
+    setFlipped(new Set(collapseByDefault === open ? keys : []));
+  };
+  /** Rows under a folder row, or the row itself. */
+  const expand = (rs: Row[]) => rs.flatMap((r) => (r.folder ? r.folder.children : [r]));
+
   const goEntry = (key: string) => {
     setEntryKey(key);
+    setFlipped(new Set());
     setCursor(0);
     setOffset(0);
     setSelected(new Set());
@@ -185,15 +217,28 @@ export function App(props: AppProps) {
   };
 
   const focusRight = () => {
+    if (focus === 'main' && row?.folder) {
+      if (row.folder.collapsed) setFolder(row, true);
+      else setCursor((c) => c + 1);
+      return;
+    }
     if (focus === 'sidebar') setFocus('main');
     else if (focus === 'main' && row?.group) goEntry(row.key);
-    else if (focus === 'main' && row && !isCost) {
+    else if (focus === 'main' && row && !isCost && !row.folder) {
       setFocus('detail');
       setOffset(0);
       setFileCursor(0);
     }
   };
   const focusLeft = () => {
+    if (focus === 'main' && row?.depth === 1) {
+      let i = cur;
+      while (i > 0 && !rows[i]!.folder) i--;
+      setFolder(rows[i], false);
+      setCursor(i);
+      return;
+    }
+    if (focus === 'main' && row?.folder && !row.folder.collapsed) return setFolder(row, false);
     if (focus === 'detail') setFocus('main');
     else if (focus === 'main' && scopeEntry) {
       const back = scopes.findIndex((e) => e.key === scopeEntry.key);
@@ -208,7 +253,7 @@ export function App(props: AppProps) {
   const ui = (): Ui => ({ entryKey: entry?.key ?? entryKey, focus, cursor: cur, sidebarHidden });
 
   const targets = (): Row[] =>
-    focus === 'sidebar' ? [] : selected.size ? rows.filter((r) => selected.has(r.key)) : row ? [row] : [];
+    focus === 'sidebar' ? [] : selected.size ? flat.filter((r) => selected.has(r.key)) : row ? expand([row]) : [];
 
   const act = (kind: FixKind) => {
     // In the file picker, delete / archive act on the picked file only.
@@ -270,7 +315,7 @@ export function App(props: AppProps) {
 
   const edit = () => {
     if (!result) return;
-    const picked = focus === 'sidebar' ? [] : selected.size ? rows.filter((r) => selected.has(r.key)) : row ? [row] : [];
+    const picked = focus === 'sidebar' ? [] : selected.size ? flat.filter((r) => selected.has(r.key)) : row ? expand([row]) : [];
     const paths = pickedFile ? [pickedFile.path] : [...new Set(picked.flatMap((r) => pathsOf(r, result)))];
     if (!paths.length) return setMessage({ tone: 'info', text: 'Nothing to open here.' });
     props.onEdit(paths, ui());
@@ -288,9 +333,13 @@ export function App(props: AppProps) {
   const toggleSelect = (all = false) => {
     if (focus === 'sidebar' || isCost) return;
     setSelected((s) => {
-      if (all) return s.size === rows.length ? new Set() : new Set(rows.map((r) => r.key));
+      if (all) return s.size === flat.length ? new Set() : new Set(flat.map((r) => r.key));
       const n = new Set(s);
-      if (row) n.has(row.key) ? n.delete(row.key) : n.add(row.key);
+      if (row?.folder) {
+        const kids = row.folder.children.map((k) => k.key);
+        const allIn = kids.every((k) => n.has(k));
+        for (const k of kids) allIn ? n.delete(k) : n.add(k);
+      } else if (row) n.has(row.key) ? n.delete(row.key) : n.add(row.key);
       return n;
     });
     if (!all) setCursor((c) => clamp(c + 1, 0, Math.max(0, rows.length - 1)));
@@ -481,6 +530,19 @@ export function App(props: AppProps) {
     if (key.ctrl && input === 'u') return move(-half);
 
     const v = vim.current;
+    if (v.z) {
+      v.z = false;
+      if (input === 'o') setFolder(row, true);
+      else if (input === 'c') setFolder(row, false);
+      else if (input === 'a' && row?.folder) flip(row.folder.key);
+      else if (input === 'R') allFolders(true);
+      else if (input === 'M') allFolders(false);
+      return;
+    }
+    if (input === 'z' && foldersOn) {
+      v.z = true;
+      return;
+    }
     if (/^[1-9]$/.test(input) || (v.count && input === '0')) {
       v.count += input;
       return;
@@ -504,6 +566,7 @@ export function App(props: AppProps) {
     else if (key.pageUp) move(-half * 2);
     else if (input === 'G') jump(counted ? n - 1 : 'bottom');
     else if (input === 'h' || key.leftArrow) focusLeft();
+    else if (key.return && focus === 'main' && row?.folder) flip(row.folder.key);
     else if (input === 'l' || key.rightArrow || key.return) focusRight();
     else if (key.tab) setFocus((f) => (f === 'sidebar' ? 'main' : showSidebar ? 'sidebar' : 'main'));
     else if (key.escape) {
@@ -572,7 +635,9 @@ export function App(props: AppProps) {
           ? 'R restore · e open · space select · / search'
           : row?.finding?.fixes.includes('relink')
             ? 'L link into MEMORY.md · d delete · a archive · i ignore · e edit · ⏎ open'
-            : 'space select · d delete · a archive · m move · i ignore · e edit · ⏎ open · / search';
+            : row?.folder
+            ? `⏎ ${row.folder.collapsed ? 'open' : 'close'} folder · zR open all · zM close all · d a i act on all ${row.folder.children.length} · space select all`
+            : 'space select · d delete · a archive · m move · i ignore · e edit · ⏎ open · h close folder · / search';
   const completion =
     mode === 'COMMAND' && cmd.trim()
       ? commands.filter((c) => c.name.startsWith(cmd.trim())).map((c) => c.name).slice(0, 6).join('  ')
@@ -675,17 +740,24 @@ export function App(props: AppProps) {
     <Box flexDirection="column" width={cols} height={termRows}>
       <Box height={bodyH}>
         {showSidebar ? (
-          <Sidebar entries={entries} cursor={entryIdx} focused={focus === 'sidebar'} width={sw} height={bodyH} />
+          <Sidebar
+            entries={entries}
+            cursor={entryIdx}
+            focused={focus === 'sidebar'}
+            width={sw}
+            height={bodyH}
+            about={entries[entryIdx] ? ENTRY_HELP[entries[entryIdx]!.key] : undefined}
+          />
         ) : null}
-        <Box flexDirection="column" width={mw}>
-          {isCost || focus === 'detail' ? null : (
+        <Box flexDirection={threeCol && !zoomed ? 'row' : 'column'} width={mw}>
+          {zoomed ? null : (
             <List
               title={listTitle}
               rows={rows}
               cursor={cur}
               selected={selected}
               focused={focus === 'main'}
-              width={mw}
+              width={listW}
               height={listH}
               empty={emptyText}
               grouped={entry?.kind === 'category' && entry.id === 'all' && !query}
@@ -696,7 +768,7 @@ export function App(props: AppProps) {
             lines={docLines}
             offset={focus === 'detail' || isCost ? offset : 0}
             focused={focus === 'detail' || (isCost && focus === 'main')}
-            width={mw}
+            width={zoomed ? mw : prevW}
             height={docHeight}
           />
         </Box>

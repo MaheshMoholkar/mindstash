@@ -98,6 +98,23 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
     ];
   }
 
+  if (row.folder) {
+    const fo = row.folder;
+    const byTag = new Map<string, number>();
+    for (const c of fo.children) byTag.set(c.tag, (byTag.get(c.tag) ?? 0) + 1);
+    const out: Line[] = [
+      { text: '', segs: [{ text: fo.collapsed ? '▸ ' : '▾ ', color: theme.accent }, { text: fo.label, bold: true, color: theme.accent }] },
+      { text: '', segs: [...byTag].flatMap(([t, n]) => [pill(`${n} ${t}`, fo.children.find((c) => c.tag === t)?.color || theme.accent), { text: ' ' }]) },
+      blank,
+      section(`${fo.children.length} findings`, width),
+    ];
+    for (const c of fo.children.slice(0, full ? 500 : 14)) {
+      out.push({ text: c.primary, segs: [{ text: '● ', color: c.color || theme.fg }, { text: c.primary }, { text: `  ${c.tag}`, color: theme.muted }] });
+    }
+    if (fo.children.length > 14 && !full) out.push({ text: `… ${fo.children.length - 14} more`, dim: true });
+    out.push(blank, { text: `⏎ ${fo.collapsed ? 'open' : 'close'} · d / a / i act on all ${fo.children.length} (with confirm)`, color: theme.info });
+    return out;
+  }
   if (row.archived) {
     const a = row.archived;
     return [

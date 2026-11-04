@@ -1,9 +1,9 @@
-import { Text } from 'ink';
+import { Box, Text } from 'ink';
 import type { Entry, Row } from './data.js';
 import { CATEGORY_COLOR, CONFIDENCE, MODE_COLOR, theme } from './theme.js';
 import { CATEGORIES } from '../cli/format.js';
 import { KIND_GLYPH } from './doc.js';
-import { fit, Lines, Panel, short, windowOf, type Line } from './ui.js';
+import { fit, Lines, Panel, short, windowOf, wrap, type Line } from './ui.js';
 
 /** Keep the end of long paths: "…/api-server" is what tells them apart. */
 const fitStart = (t: string, w: number) => (t.length > w && w > 1 ? '…' + t.slice(t.length - w + 1) : t.padEnd(w));
@@ -16,18 +16,25 @@ export function Sidebar({
   focused,
   width,
   height,
+  about,
 }: {
   entries: Entry[];
   cursor: number;
   focused: boolean;
   width: number;
   height: number;
+  /** Explanation of the highlighted entry, shown in a box below. */
+  about?: string;
 }) {
   const inner = width - 4;
-  const visible = height - 2;
+  const aboutLines = about ? wrap(about, inner) : [];
+  const aboutH = about ? Math.min(aboutLines.length + 2, Math.max(4, Math.floor(height / 3))) : 0;
+  const listH = height - aboutH;
+  const visible = listH - 2;
   const { start, end } = windowOf(entries.length, cursor, visible);
   return (
-    <Panel title="MindStash" width={width} height={height} focused={focused}>
+    <Box flexDirection="column" width={width} height={height}>
+    <Panel title="MindStash" width={width} height={listH} focused={focused}>
       {entries.slice(start, end).map((e, i) => {
         const on = start + i === cursor;
         if (e.kind === 'gap') return <Text key={e.key}> </Text>;
@@ -72,6 +79,16 @@ export function Sidebar({
         );
       })}
     </Panel>
+    {about ? (
+      <Panel title="About" width={width} height={aboutH}>
+        {aboutLines.slice(0, aboutH - 2).map((t, j) => (
+          <Text key={j} color={theme.fg}>
+            {t}
+          </Text>
+        ))}
+      </Panel>
+    ) : null}
+    </Box>
   );
 }
 
@@ -107,10 +124,14 @@ export function List({
   type D = { band: string; color: string; count: number } | { row: Row; index: number };
   const display: D[] = [];
   const counts = new Map<string, number>();
-  for (const r of rows) if (r.finding) counts.set(r.finding.category, (counts.get(r.finding.category) ?? 0) + 1);
+  for (const r of rows) {
+    const c = r.category ?? r.finding?.category;
+    if (c) counts.set(c, (counts.get(c) ?? 0) + (r.folder ? r.folder.children.length : r.depth ? 0 : 1));
+  }
   rows.forEach((row, index) => {
-    const cat = row.finding?.category;
-    if (grouped && cat && cat !== rows[index - 1]?.finding?.category) {
+    const cat = row.category ?? row.finding?.category;
+    const prev = rows[index - 1];
+    if (grouped && cat && cat !== (prev?.category ?? prev?.finding?.category)) {
       const label = CATEGORIES.find((c) => c.id === cat)?.label ?? cat;
       display.push({ band: label, color: CATEGORY_COLOR[cat] ?? theme.fg, count: counts.get(cat) ?? 0 });
     }
@@ -141,9 +162,12 @@ export function List({
         }
         const { row } = d;
         const on = d.index === cursor;
-        const sel = selected.has(row.key);
+        const sel = selected.has(row.key) || Boolean(row.folder?.children.every((c) => selected.has(c.key)));
         const conf = row.finding ? CONFIDENCE[row.finding.confidence] : row.pair ? theme.warn : theme.ok;
-        const k = KIND_GLYPH[row.kind ?? ''] ?? { g: '·', color: theme.muted };
+        const k = row.folder
+          ? { g: row.folder.collapsed ? '▸' : '▾', color: theme.accent }
+          : KIND_GLYPH[row.kind ?? ''] ?? { g: '·', color: theme.muted };
+        const indent = row.depth ? '  └ ' : '';
         const bg = on ? (focused ? theme.cursor : theme.cursorDim) : sel ? theme.picked : undefined;
         const tag = fit(row.tag, tagW - 2).trimEnd();
         const tagColor = row.color || theme.ok;
@@ -153,8 +177,9 @@ export function List({
             <Text color={theme.accent2} backgroundColor={bg}>{sel ? '◆' : ' '}</Text>
             <Text color={conf} backgroundColor={bg}>{row.finding || row.pair ? '●' : ' '}</Text>
             <Text color={k.color} backgroundColor={bg}>{` ${k.g} `}</Text>
-            <Text bold={on || sel} color={on ? '#ffffff' : theme.fg} backgroundColor={bg}>
-              {fit(row.primary, priW)}
+            <Text color={theme.rule} backgroundColor={bg}>{indent}</Text>
+            <Text bold={on || sel || Boolean(row.folder)} color={on ? '#ffffff' : row.folder ? theme.accent : theme.fg} backgroundColor={bg}>
+              {row.folder ? fitStart(row.primary, priW - indent.length) : fit(row.primary, priW - indent.length)}
             </Text>
             <Text backgroundColor={bg}> </Text>
             <Text color={on ? '#e0e6ff' : theme.info} backgroundColor={bg}>
