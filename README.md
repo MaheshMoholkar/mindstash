@@ -63,11 +63,12 @@ node dist/cli.js scan
 npm test          # vitest, with fake ~/.claude folders built per test
 npm run typecheck
 npm run dev -- scan
+npm run site:screens   # re-render the landing page's terminal screens from the real UI
 ```
 
 Env: `CLAUDE_CONFIG_DIR` (default `~/.claude`), `CODEX_HOME` (default `~/.codex`), `MINDSTASH_HOME` (default `~/.mindstash`).
 
-Code: `src/core` (scan, rules, fixes, backup; agent-agnostic), `src/adapters` (one per agent), `src/cli`, `src/tui` (Ink screens, loaded only for the interactive UI).
+Code: `src/core` (scan, rules, fixes, backup; agent-agnostic), `src/adapters` (one per agent), `src/cli`, `src/tui` (Ink screens, loaded only for the interactive UI), `site` (static landing page, no build step; open `site/index.html` through any static server).
 
 ## Docs
 

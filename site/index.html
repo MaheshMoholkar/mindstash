@@ -1,0 +1,747 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MindStash · See and clean up what your AI agents remember</title>
+<meta name="description" content="MindStash scans the memories and skills Claude Code and Codex save, flags what is stale, misplaced, repeated or contradictory, and helps you clean up with a backup for every change.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="MindStash">
+<meta property="og:description" content="See, scope and clean up what your AI agents know.">
+<meta name="theme-color" content="#16161e">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231a1b26'/%3E%3Cpath d='M8 10h16M8 16h10M8 22h6' stroke='%237aa2f7' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Martian+Mono:wght@500;700;800&display=swap">
+<link rel="preload" href="fonts/JetBrainsMono-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+  /* Self-hosted: Google's copy leaves out the box-drawing characters the terminal screens use. */
+  @font-face { font-family: 'JetBrains Mono'; src: url(fonts/JetBrainsMono-Regular.woff2) format('woff2'); font-weight: 400; font-display: swap; }
+  @font-face { font-family: 'JetBrains Mono'; src: url(fonts/JetBrainsMono-Bold.woff2) format('woff2'); font-weight: 700; font-display: swap; }
+
+  /* Colors follow the terminal UI's theme (src/tui/theme.ts). */
+  :root {
+    --bg: #16161e;
+    --term-bg: #1a1b26;
+    --term-fg: #c0caf5;
+    --panel: #1a1b26;
+    --hilite: #292e42;
+    --line: #232433;
+    --line-2: #2f3349;
+    --fg: #c0caf5;
+    --fg-2: #a9b1d6;
+    --muted: #9aa5ce;
+    --dim: #828bb8;
+    --accent: #7aa2f7;
+    --accent-2: #bb9af7;
+    --ok: #9ece6a;
+    --warn: #e0af68;
+    --error: #f7768e;
+    --info: #7dcfff;
+    --ink: #1a1b26;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --display: 'Martian Mono', 'JetBrains Mono', ui-monospace, monospace;
+    --sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  code { font-family: var(--mono); font-size: 0.9em; color: var(--fg); }
+  ::selection { background: var(--accent); color: var(--ink); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .skip { position: absolute; left: 16px; top: -48px; padding: 10px 14px; background: var(--accent); color: var(--ink); border-radius: 8px; font-weight: 600; z-index: 10; }
+  .skip:focus { top: 12px; }
+  .wrap { max-width: 1136px; margin: 0 auto; padding: 0 32px; }
+
+  /* Header */
+  .site-header { position: sticky; top: 0; z-index: 5; background: rgba(22, 22, 30, 0.86); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+  .nav { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 32px; padding-top: 12px; padding-bottom: 12px; }
+  .brand { display: flex; align-items: center; gap: 10px; min-height: 44px; text-decoration: none; font-family: var(--display); font-weight: 700; font-size: 16px; }
+  .nav-links { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 26px; font-size: 15px; }
+  .nav-links a { display: flex; align-items: center; min-height: 44px; color: var(--fg-2); text-decoration: none; }
+  .nav-links a:hover { color: var(--fg); }
+  .nav-links .gh { gap: 8px; min-height: 40px; padding: 0 14px; border: 1px solid var(--line-2); border-radius: 8px; color: var(--fg); font-weight: 500; }
+  .nav-links .gh:hover { border-color: var(--accent); }
+
+  /* Shared pieces */
+  .eyebrow { font-family: var(--mono); font-size: 13px; color: var(--accent); }
+  h1, h2 { font-family: var(--display); letter-spacing: -0.02em; margin: 0; text-wrap: balance; }
+  h2 { font-weight: 700; font-size: clamp(26px, 3vw, 38px); line-height: 1.2; }
+  h3 { margin: 0; font-weight: 600; }
+  p { margin: 0; }
+  .lead { font-size: 17px; line-height: 1.6; color: var(--fg-2); text-wrap: pretty; }
+  section { border-top: 1px solid var(--line); }
+  .section { padding-top: 112px; padding-bottom: 112px; display: flex; flex-direction: column; gap: 48px; }
+  .section-head { display: flex; flex-direction: column; gap: 14px; }
+
+  .install { display: inline-flex; align-items: center; gap: 16px; padding: 6px 6px 6px 20px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 10px; font-family: var(--mono); font-size: 16px; max-width: 100%; }
+  .install .prompt { color: var(--dim); }
+  .install > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .install code { font-size: inherit; }
+  .copy { display: flex; flex: none; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px; border: 0; border-radius: 7px; background: var(--accent); color: var(--ink); font-family: var(--sans); font-weight: 600; font-size: 15px; cursor: pointer; }
+  .copy:hover { background: #8db0f8; }
+  .copy.copied { background: var(--ok); }
+
+  /* Hero */
+  .hero { border-top: 0; }
+  .hero .wrap { padding-top: 96px; padding-bottom: 112px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 28px; }
+  .chip { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border: 1px solid var(--line-2); border-radius: 999px; font-family: var(--mono); font-size: 13px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+  /* Martian Mono is wide: a 30-character line is about 20 times the font size, so 3.5vw always fits. */
+  .hero h1 { max-width: 1080px; font-weight: 800; font-size: clamp(24px, 3.5vw, 50px); line-height: 1.14; letter-spacing: -0.03em; }
+  .hero h1 > span { display: block; }
+  .hero h1 .second { color: var(--dim); }
+  .cursor { display: inline-block; width: 0.55em; height: 0.86em; margin-left: 0.14em; vertical-align: -0.06em; background: var(--accent); animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .hero .lead { max-width: 680px; font-size: 19px; }
+  .cta-row { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 14px 24px; margin-top: 8px; }
+  .text-link { display: flex; align-items: center; gap: 8px; min-height: 44px; font-weight: 500; text-decoration: none; }
+  .text-link:hover { color: var(--accent); }
+  .meta { font-family: var(--mono); font-size: 13px; color: var(--dim); }
+
+  /* Terminal windows: screens are the real UI, rendered by scripts/site-screens.tsx */
+  .window { width: 100%; max-width: calc(120ch + 34px); margin: 0 auto; text-align: left; font-family: var(--mono); font-size: 12px; background: var(--term-bg); border: 1px solid var(--line-2); border-radius: 12px; box-shadow: 0 40px 100px -40px rgba(0, 0, 0, 0.9); overflow: hidden; }
+  @media (min-width: 1100px) { .window { font-size: 13px; } }
+  .window-bar { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--line); font-family: var(--sans); }
+  .window-bar i { width: 11px; height: 11px; border-radius: 50%; background: #2f3349; }
+  .window-bar span { flex: 1; margin-right: 49px; text-align: center; font-family: var(--mono); font-size: 12px; color: var(--dim); }
+  .screen { margin: 0; padding: 14px 16px 16px; overflow-x: auto; font-family: var(--mono); font-size: inherit; line-height: 1.22; color: var(--term-fg); background: var(--term-bg); tab-size: 4; }
+  .window figcaption, .caption { padding: 12px 18px; border-top: 1px solid var(--line); font-family: var(--sans); font-size: 14px; line-height: 1.5; color: var(--muted); }
+  .hero .window { margin-top: 48px; }
+
+  /* How it works */
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 32px 40px; }
+  .step { display: flex; flex-direction: column; gap: 10px; padding-top: 18px; border-top: 2px solid var(--line-2); }
+  .step .eyebrow { color: var(--dim); }
+  .step h3 { font-size: 21px; }
+  .step p { color: var(--fg-2); line-height: 1.6; }
+
+  .tour { display: flex; flex-direction: column; gap: 16px; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .tab { min-height: 40px; padding: 0 14px; border: 1px solid var(--line-2); border-radius: 999px; background: transparent; color: var(--fg-2); font-family: var(--mono); font-size: 13px; cursor: pointer; }
+  .tab:hover { color: var(--fg); border-color: var(--dim); }
+  .tab[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: var(--ink); font-weight: 700; }
+  .tab .key { opacity: 0.75; margin-right: 6px; }
+  .tabs[hidden] { display: none; }
+  .panel + .panel { border-top: 1px solid var(--line-2); }
+  .panel[hidden] { display: none; }
+
+  /* Rules table */
+  .rules { width: 100%; border-collapse: collapse; font-size: 15px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 12px; overflow: hidden; }
+  .rules th { padding: 14px 20px; text-align: left; font-family: var(--mono); font-size: 12px; font-weight: 400; letter-spacing: 0.04em; text-transform: uppercase; color: var(--dim); }
+  .rules td { padding: 15px 20px; border-top: 1px solid var(--line); vertical-align: top; color: var(--fg-2); line-height: 1.5; }
+  .rules td:first-child { width: 30%; }
+  .rules td:first-child code { color: var(--info); font-size: 14px; }
+  .rules td:nth-child(2) { width: 17%; white-space: nowrap; }
+  .conf { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; }
+  .conf::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+  .conf.high::before { background: var(--error); }
+  @media (max-width: 720px) {
+    .rules, .rules tbody, .rules tr, .rules td { display: block; width: 100% !important; }
+    .rules thead { display: none; }
+    .rules tr { padding: 14px 18px; border-top: 1px solid var(--line); }
+    .rules tr:first-child { border-top: 0; }
+    .rules td { padding: 2px 0; border: 0; }
+  }
+
+  /* Safety */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 20px; }
+  .card { display: flex; flex-direction: column; gap: 14px; padding: 28px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 12px; }
+  .card h3 { font-size: 19px; }
+  .card p { font-size: 15px; line-height: 1.6; color: var(--muted); }
+  .card code { font-size: 13px; color: var(--fg); }
+
+  /* Agent */
+  .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); gap: 40px 64px; align-items: center; }
+  @media (max-width: 1100px) { .split { grid-template-columns: minmax(0, 1fr); } }
+  .split .section-head { gap: 18px; }
+  .chat { margin: 0; padding: 22px 24px; overflow-x: auto; background: var(--term-bg); border: 1px solid var(--line-2); border-radius: 12px; font-family: var(--mono); font-size: 13px; line-height: 1.7; color: var(--fg); white-space: pre; }
+  .chat .you { color: var(--accent); }
+  .chat .muted { color: var(--dim); }
+  .chat b { color: #e3e8ff; }
+
+  /* Final call to action */
+  .final .wrap { padding-top: 136px; padding-bottom: 136px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 24px; }
+  .final h2 { font-weight: 800; font-size: clamp(28px, 3.6vw, 48px); line-height: 1.15; letter-spacing: -0.03em; }
+  .final .lead { max-width: 560px; font-size: 18px; color: var(--muted); }
+  .final .install { margin-top: 12px; font-size: 18px; }
+
+  footer .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 32px; padding-top: 24px; padding-bottom: 24px; font-size: 14px; color: var(--dim); }
+  footer nav { display: flex; flex-wrap: wrap; gap: 4px 24px; }
+  footer nav a { display: flex; align-items: center; min-height: 44px; color: var(--muted); text-decoration: none; }
+  footer nav a:hover { color: var(--fg); }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 0 20px; }
+    .nav-links .hide-sm { display: none; }
+    .hero .wrap { padding-top: 64px; padding-bottom: 80px; }
+    .section { padding-top: 80px; padding-bottom: 80px; }
+    .final .wrap { padding-top: 96px; padding-bottom: 96px; }
+    .install { font-size: 13px; padding-left: 14px; gap: 10px; }
+    .copy { padding: 0 14px; }
+    .copy span { display: none; }
+    .final .install { font-size: 15px; }
+    .card { padding: 22px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .cursor { animation: none; }
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap nav">
+    <a class="brand" href="#top">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#7aa2f7" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h5"/></svg>
+      <span>mindstash</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="hide-sm" href="#how">How it works</a>
+      <a class="hide-sm" href="#rules">What it flags</a>
+      <a class="hide-sm" href="#safety">Safety</a>
+      <a class="gh" href="https://github.com/MaheshMoholkar/mindstash">GitHub
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>
+      </a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="hero" id="top">
+  <div class="wrap">
+    <div class="chip"><span class="dot"></span>For Claude Code and Codex</div>
+    <h1>
+      <span>See what your agents remember.</span>
+      <span class="second">Clean up what they <span style="white-space: nowrap;">shouldn't.<span class="cursor" aria-hidden="true"></span></span></span>
+    </h1>
+    <p class="lead">Claude Code and Codex save memories and load skills on their own. Over time some go stale, some land in the wrong folder, some repeat or contradict each other. MindStash finds them, tells you why each one was flagged, and helps you clean up.</p>
+    <div class="cta-row">
+      <div class="install">
+        <span><span class="prompt">$ </span><code>npx mindstash</code></span>
+        <button class="copy" type="button" data-copy="npx mindstash" aria-label="Copy npx mindstash">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+          <span>Copy</span>
+        </button>
+      </div>
+      <a class="text-link" href="https://github.com/MaheshMoholkar/mindstash#readme">Read the docs
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </a>
+    </div>
+    <p class="meta">Node 20+ · MIT · nothing changes without asking</p>
+
+    <figure class="window">
+      <div class="window-bar" aria-hidden="true"><i></i><i></i><i></i><span>~ · npx mindstash</span></div>
+      <pre class="screen" aria-label="MindStash terminal UI: findings list with a preview of one finding"><!-- screen:main --><span style="color:#414868">╭─</span><span style="color:#c0caf5;font-weight:700"> MindStash </span><span style="color:#414868">────────────────────╮</span><span style="color:#7aa2f7">╭─</span><span style="color:#7aa2f7;font-weight:700"> All </span><span style="color:#7aa2f7">────────────────────────────────────────────────────────────────────────</span><span style="color:#9aa5ce"> 5/6 </span><span style="color:#7aa2f7">─╮</span>
+<span style="color:#414868">│</span> <span style="color:#9aa5ce;font-weight:700">FINDINGS                      </span> <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#f7768e">●</span> 2 memories                                <span style="color:#9aa5ce">~/work/old-prototype </span> <span style="color:#e0af68">  project gone</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#7aa2f7;font-weight:700">● All                        6</span> <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#f7768e">●</span> old-api-endpoints                         <span style="color:#9aa5ce">~/work/api-server    </span> <span style="color:#e0af68">  missing file</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#e0af68">●</span> Stale                      3 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#f7768e">●</span> skill "use-railway" is installed 2 times  <span style="color:#9aa5ce">global               </span> <span style="color:#bb9af7">duplicate ski…</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#7dcfff">●</span> Wrong scope                1 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#e0af68">●</span> api-server-conventions                    <span style="color:#9aa5ce">~                    </span> <span style="color:#7dcfff">   wrong scope</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#bb9af7">●</span> Look similar               2 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7;background:#292e42">▌</span><span style="color:#bb9af7;background:#292e42"> </span><span style="color:#e0af68;background:#292e42">●</span><span style="background:#292e42"> </span><span style="color:#c0caf5;background:#292e42;font-weight:700">hackathon-notes                          </span><span style="background:#292e42"> </span><span style="color:#9aa5ce;background:#292e42">~                    </span><span style="background:#292e42"> </span><span style="color:#e0af68;background:#292e42">     past date</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#e0af68">●</span> concise-responses ↔ prefers-short-answer… <span style="color:#9aa5ce">~                    </span> <span style="color:#bb9af7">  look similar</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#9aa5ce;font-weight:700">VIEWS                         </span> <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Browse all                 5 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Checks                     1 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Token cost                   <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">╰────────────────────────────────────────────────────────────────────────────────────╯</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│╭─</span><span style="color:#c0caf5;font-weight:700"> Preview </span><span style="color:#414868">──────────────────────────────────────────────────────────────────</span><span style="color:#9aa5ce"> 14/18 </span><span style="color:#414868">─╮</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#e0af68;font-weight:700">"Team hackathon Oct 15–18 2026." ended 17 days ago</span>                                 <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#e0af68">past date · medium confidence · 80736e</span>                                             <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5"> </span>                                                                                  <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce;font-weight:700">WHY FLAGGED</span>                                                                        <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5">Mentions "Team hackathon Oct 15–18 2026.", which ended 17 days ago.</span>                <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5">Costs ~18 tokens per session.</span>                                                      <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5"> </span>                                                                                  <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce;font-weight:700">FILE</span>                                                                               <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5;font-weight:700">hackathon-notes</span>                                                                    <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce">memory · ~ · Claude Code · ~18 tk/session</span>                                          <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#414868">│ </span><span style="color:#c0caf5">Team hackathon Oct 15–18 2026. Demo on Friday at booth 12.</span>                       <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#414868">│ </span><span style="color:#c0caf5">Keep answers short during the event.</span>                                             <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#414868">│ </span><span style="color:#c0caf5"> </span>                                                                                <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce">… more below (j/k)</span>                                                                 <span style="color:#414868">│</span>
+<span style="color:#414868">╰────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────╯</span>
+<span style="color:#1a1b26;background:#7aa2f7;font-weight:700"> NORMAL </span><span style="color:#c0caf5;background:#292e42"> All › 5/6                                         </span><span style="color:#7dcfff;background:#292e42"> Claude 248 · Codex 41 tk/session </span><span style="color:#c0caf5;background:#414868"> ? help  : cmd  ^p palette </span>
+<span style="color:#9aa5ce">space select · d delete · a archive · m move · i ignore · e edit · ⏎ open · / search                                    </span>
+<!-- /screen:main --></pre>
+      <figcaption>The terminal UI, run on a demo folder. Prefer a report? <code>mindstash scan</code> prints one, and <code>--json</code> is for scripts and agents.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap section">
+    <div class="section-head">
+      <span class="eyebrow">01 / how it works</span>
+      <h2>Scan. Flag. Fix.</h2>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <span class="eyebrow">scan</span>
+        <h3>Every memory and skill, in one place</h3>
+        <p>MindStash reads Claude Code and Codex, globally and per project. Scanning never changes your agents' files.</p>
+      </div>
+      <div class="step">
+        <span class="eyebrow">flag</span>
+        <h3>Every finding says why</h3>
+        <p>Each one comes with its reason, a confidence level and what it costs in tokens every session. Dismiss a false alarm once and it stays quiet.</p>
+      </div>
+      <div class="step">
+        <span class="eyebrow">fix</span>
+        <h3>Delete, archive or move</h3>
+        <p>You pick what goes and see the plan first. A backup is saved to git before anything changes, and <code>u</code> undoes it.</p>
+      </div>
+    </div>
+
+    <div class="tour">
+      <div class="tabs" role="tablist" aria-label="Screens" hidden>
+        <button class="tab" type="button" role="tab" id="tab-welcome" aria-controls="panel-welcome">First run</button>
+        <button class="tab" type="button" role="tab" id="tab-detail" aria-controls="panel-detail"><span class="key">l</span>Why flagged</button>
+        <button class="tab" type="button" role="tab" id="tab-confirm" aria-controls="panel-confirm"><span class="key">d</span>Confirm</button>
+        <button class="tab" type="button" role="tab" id="tab-applied" aria-controls="panel-applied"><span class="key">y</span>Applied</button>
+        <button class="tab" type="button" role="tab" id="tab-cost" aria-controls="panel-cost"><span class="key">:cost</span>Token cost</button>
+        <button class="tab" type="button" role="tab" id="tab-palette" aria-controls="panel-palette"><span class="key">^p</span>Jump anywhere</button>
+        <button class="tab" type="button" role="tab" id="tab-help" aria-controls="panel-help"><span class="key">?</span>Keys</button>
+      </div>
+      <div class="window">
+        <div class="window-bar" aria-hidden="true"><i></i><i></i><i></i><span>~ · npx mindstash</span></div>
+        <div class="panel" role="tabpanel" id="panel-welcome" aria-labelledby="tab-welcome">
+          <pre class="screen"><!-- screen:welcome --><span style="color:#414868">╭─</span><span style="color:#c0caf5;font-weight:700"> MindStash </span><span style="color:#414868">────────────────────╮</span><span style="color:#7aa2f7">╭─</span><span style="color:#7aa2f7;font-weight:700"> All </span><span style="color:#7aa2f7">────────────────────────────────────────────────────────────────────────</span><span style="color:#9aa5ce"> 5/6 </span><span style="color:#7aa2f7">─╮</span>
+<span style="color:#414868">│</span> <span style="color:#9aa5ce;font-weight:700">FINDINGS                      </span> <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#f7768e">●</span> 2 memories                                <span style="color:#9aa5ce">~/work/old-prototype </span> <span style="color:#e0af68">  project gone</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#7aa2f7;font-weight:700">● All                        6</span> <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#f7768e">●</span> old-api-endpoints                         <span style="color:#9aa5ce">~/work/api-server    </span> <span style="color:#e0af68">  missing file</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#e0af68">●</span> Stale                      3 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#f7768e">●</span> skill "use-railway" is installed 2 times  <span style="color:#9aa5ce">global               </span> <span style="color:#bb9af7">duplicate ski…</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#7dcfff">●</span> Wrong scope                1 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#e0af68">●</span> api-server-conventions                    <span style="color:#9aa5ce">~                    </span> <span style="color:#7dcfff">   wrong scope</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#bb9af7">●</span> Look similar               2 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7;background:#292e42">▌</span><span style="color:#bb9af7;background:#292e42"> </span><span style="color:#e0af68;background:#292e42">●</span><span style="background:#292e42"> </span><span style="color:#c0caf5;background:#292e42;font-weight:700">hackathon-notes                          </span><span style="background:#292e42"> </span><span style="color:#9aa5ce;background:#292e42">~                    </span><span style="background:#292e42"> </span><span style="color:#e0af68;background:#292e42">     past date</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">╭─</span><span style="color:#7aa2f7;font-weight:700"> Welcome to MindStash </span><span style="color:#7aa2f7">───────────────────────────────────────────────────╮</span><span style="color:#9aa5ce">     </span> <span style="color:#bb9af7">  look similar</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#9aa5ce;font-weight:700">VIEWS               </span><span style="color:#7aa2f7">│ </span><span style="color:#c0caf5;font-weight:700">Looking for agents…                                                     </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Browse all        <span style="color:#7aa2f7">│ </span><span style="color:#9ece6a">✓ Claude Code 3 projects · 11 memories · 4 skills                       </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Checks            <span style="color:#7aa2f7">│ </span><span style="color:#9ece6a">✓ Codex 0 projects · 0 memories · 1 skill                               </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Token cost        <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">                                                                        </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">Nothing changes without asking you. Every fix is backed up and can be   </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">undone with u.                                                          </span><span style="color:#7aa2f7"> │─────────────────────╯</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">                                                                        </span><span style="color:#7aa2f7"> │</span><span style="color:#414868">─────────────</span><span style="color:#9aa5ce"> 14/18 </span><span style="color:#414868">─╮</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#9aa5ce">Press ? any time for keys, Ctrl-P to jump anywhere.                     </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">                                                                        </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#9aa5ce">⏎ continue q quit                                                       </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">╰──────────────────────────────────────────────────────────────────────────╯</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5">Mentions "Team hackathon Oct 15–18 2026.", which ended 17 days ago.</span>                <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5">Costs ~18 tokens per session.</span>                                                      <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5"> </span>                                                                                  <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce;font-weight:700">FILE</span>                                                                               <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5;font-weight:700">hackathon-notes</span>                                                                    <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce">memory · ~ · Claude Code · ~18 tk/session</span>                                          <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#414868">│ </span><span style="color:#c0caf5">Team hackathon Oct 15–18 2026. Demo on Friday at booth 12.</span>                       <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#414868">│ </span><span style="color:#c0caf5">Keep answers short during the event.</span>                                             <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#414868">│ </span><span style="color:#c0caf5"> </span>                                                                                <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce">… more below (j/k)</span>                                                                 <span style="color:#414868">│</span>
+<span style="color:#414868">╰────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────╯</span>
+<span style="color:#1a1b26;background:#7aa2f7;font-weight:700"> NORMAL </span><span style="color:#c0caf5;background:#292e42"> All › 5/6                                         </span><span style="color:#7dcfff;background:#292e42"> Claude 248 · Codex 41 tk/session </span><span style="color:#c0caf5;background:#414868"> ? help  : cmd  ^p palette </span>
+<span style="color:#9aa5ce">space select · d delete · a archive · m move · i ignore · e edit · ⏎ open · / search                                    </span>
+<!-- /screen:welcome --></pre>
+          <p class="caption">It finds Claude Code and Codex on its own, and says up front that nothing changes without asking.</p>
+        </div>
+        <div class="panel" role="tabpanel" id="panel-detail" aria-labelledby="tab-detail">
+          <pre class="screen"><!-- screen:detail --><span style="color:#414868">╭─</span><span style="color:#c0caf5;font-weight:700"> MindStash </span><span style="color:#414868">────────────────────╮</span><span style="color:#7aa2f7">╭─</span><span style="color:#7aa2f7;font-weight:700"> hackathon-notes </span><span style="color:#7aa2f7">──────────────────────────────────────────────────────────────────╮</span>
+<span style="color:#414868">│</span> <span style="color:#9aa5ce;font-weight:700">FINDINGS                      </span> <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#e0af68;font-weight:700">"Team hackathon Oct 15–18 2026." ended 17 days ago</span>                                 <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#7aa2f7;font-weight:700">● All                        6</span> <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#e0af68">past date · medium confidence · 80736e</span>                                             <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#e0af68">●</span> Stale                      3 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#c0caf5"> </span>                                                                                  <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#7dcfff">●</span> Wrong scope                1 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#9aa5ce;font-weight:700">WHY FLAGGED</span>                                                                        <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#bb9af7">●</span> Look similar               2 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#c0caf5">Mentions "Team hackathon Oct 15–18 2026.", which ended 17 days ago.</span>                <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#c0caf5">Costs ~18 tokens per session.</span>                                                      <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#9aa5ce;font-weight:700">VIEWS                         </span> <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#c0caf5"> </span>                                                                                  <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Browse all                 5 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#9aa5ce;font-weight:700">FILE</span>                                                                               <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Checks                     1 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#c0caf5;font-weight:700">hackathon-notes</span>                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Token cost                   <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#9aa5ce">memory · ~ · Claude Code · ~18 tk/session</span>                                          <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#414868">│ </span><span style="color:#c0caf5">Team hackathon Oct 15–18 2026. Demo on Friday at booth 12.</span>                       <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#414868">│ </span><span style="color:#c0caf5">Keep answers short during the event.</span>                                             <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#414868">│ </span><span style="color:#c0caf5"> </span>                                                                                <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#414868">│ </span><span style="color:#c0caf5">- The demo runs from the hackathon branch; keep it deployable.</span>                   <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#414868">│ </span><span style="color:#c0caf5">- Skip refactors until judging is over.</span>                                          <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#414868">│ </span><span style="color:#c0caf5">- Slides are in the team drive, in the Hackathon 2026 folder.</span>                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#414868">│ </span><span style="color:#c0caf5">- Priya owns the backend demo, Sam owns the slides.</span>                              <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#9aa5ce">/Users/you/.claude/projects/-Users-you/memory/hackathon-notes.md</span>                   <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">╰────────────────────────────────╯</span><span style="color:#7aa2f7">╰────────────────────────────────────────────────────────────────────────────────────╯</span>
+<span style="color:#1a1b26;background:#7aa2f7;font-weight:700"> NORMAL </span><span style="color:#c0caf5;background:#292e42"> All › 5/6 › detail                                </span><span style="color:#7dcfff;background:#292e42"> Claude 248 · Codex 41 tk/session </span><span style="color:#c0caf5;background:#414868"> ? help  : cmd  ^p palette </span>
+<span style="color:#9aa5ce">j/k scroll · d delete · a archive · m move · i ignore · e edit · h back                                                 </span>
+<!-- /screen:detail --></pre>
+          <p class="caption">Open a finding to see why it was flagged, how sure MindStash is, and the file itself.</p>
+        </div>
+        <div class="panel" role="tabpanel" id="panel-confirm" aria-labelledby="tab-confirm">
+          <pre class="screen"><!-- screen:confirm --><span style="color:#414868">╭─</span><span style="color:#c0caf5;font-weight:700"> MindStash </span><span style="color:#414868">────────────────────╮</span><span style="color:#7aa2f7">╭─</span><span style="color:#7aa2f7;font-weight:700"> All </span><span style="color:#7aa2f7">────────────────────────────────────────────────────────────────────────</span><span style="color:#9aa5ce"> 6/6 </span><span style="color:#7aa2f7">─╮</span>
+<span style="color:#414868">│</span> <span style="color:#9aa5ce;font-weight:700">FINDINGS                      </span> <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#f7768e">●</span> 2 memories                                <span style="color:#9aa5ce">~/work/old-prototype </span> <span style="color:#e0af68">  project gone</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#7aa2f7;font-weight:700">● All                        6</span> <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7">◆</span><span style="color:#f7768e">●</span> old-api-endpoints                         <span style="color:#9aa5ce">~/work/api-server    </span> <span style="color:#e0af68">  missing file</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#e0af68">●</span> Stale                      3 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#f7768e">●</span> skill "use-railway" is installed 2 times  <span style="color:#9aa5ce">global               </span> <span style="color:#bb9af7">duplicate ski…</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#7dcfff">●</span> Wrong scope                1 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#e0af68">●</span> api-server-conventions                    <span style="color:#9aa5ce">~                    </span> <span style="color:#7dcfff">   wrong scope</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#bb9af7">●</span> Look similar               2 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7">◆</span><span style="color:#e0af68">●</span> hackathon-notes                           <span style="color:#9aa5ce">~                    </span> <span style="color:#e0af68">     past date</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7;background:#292e42">▌</span><span style="color:#bb9af7;background:#292e42"> </span><span style="color:#e0af68;background:#292e42">●</span><span style="background:#292e42"> </span><span style="color:#c0caf5;background:#292e42;font-weight:700">concise-responses ↔ prefers-short-answer…</span><span style="background:#292e42"> </span><span style="color:#9aa5ce;background:#292e42">~                    </span><span style="background:#292e42"> </span><span style="color:#bb9af7;background:#292e42">  look similar</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#9aa5ce;font-weight:700">VIEWS               </span><span style="color:#f7768e">╭─</span><span style="color:#f7768e;font-weight:700"> Apply 2 changes? </span><span style="color:#f7768e">───────────────────────────────────────────────────────╮</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Browse all        <span style="color:#f7768e">│ </span><span style="color:#c0caf5">✕ delete old-api-endpoints ~/work/api-server                            </span><span style="color:#f7768e"> │</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Checks            <span style="color:#f7768e">│ </span><span style="color:#c0caf5">✕ delete hackathon-notes ~                                              </span><span style="color:#f7768e"> │</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Token cost        <span style="color:#f7768e">│ </span><span style="color:#c0caf5">                                                                        </span><span style="color:#f7768e"> │</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#f7768e">│ </span><span style="color:#9ece6a">Saves ~37 tokens per session.                                           </span><span style="color:#f7768e"> │</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#f7768e">│ </span><span style="color:#9aa5ce">A backup is saved first. Undo any time with u.                          </span><span style="color:#f7768e"> │</span><span style="color:#7aa2f7">─────────────────────╯</span>
+<span style="color:#414868">│</span>                     <span style="color:#f7768e">│ </span><span style="color:#c0caf5">                                                                        </span><span style="color:#f7768e"> │</span><span style="color:#414868">─────────────</span><span style="color:#9aa5ce"> 14/22 </span><span style="color:#414868">─╮</span>
+<span style="color:#414868">│</span>                     <span style="color:#f7768e">│ </span><span style="color:#9aa5ce">y apply n cancel                                                        </span><span style="color:#f7768e"> │</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#f7768e">╰──────────────────────────────────────────────────────────────────────────╯</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5"> </span>                                                                                  <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce;font-weight:700">WHY FLAGGED</span>                                                                        <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5">These two memories share 56% of their wording and may say the same thing.</span>          <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5">Both load in ~.</span>                                                                    <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5">MindStash won't merge them; open both and keep the one you want.</span>                   <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5">Costs ~17 tokens per session.</span>                                                      <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5"> </span>                                                                                  <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce;font-weight:700">FILE 1 OF 2</span>                                                                        <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5;font-weight:700">concise-responses</span>                                                                  <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce">memory · ~ · Claude Code · ~17 tk/session</span>                                          <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#414868">│ </span><span style="color:#c0caf5">User wants short answers with no fluff; skip the long intros and get right to</span>    <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce">… more below (j/k)</span>                                                                 <span style="color:#414868">│</span>
+<span style="color:#414868">╰────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────╯</span>
+<span style="color:#1a1b26;background:#f7768e;font-weight:700"> CONFIRM </span><span style="color:#c0caf5;background:#292e42"> All › 6/6                          </span><span style="color:#1a1b26;background:#bb9af7"> ◆ 2 selected </span><span style="color:#7dcfff;background:#292e42"> Claude 248 · Codex 41 tk/session </span><span style="color:#c0caf5;background:#414868"> ? help  : cmd  ^p palette </span>
+<span style="color:#9aa5ce">space select · d delete · a archive · m move · i ignore · e edit · ⏎ open · / search                                    </span>
+<!-- /screen:confirm --></pre>
+          <p class="caption">Select rows with Space and press <code>d</code>. Every change is listed before anything happens.</p>
+        </div>
+        <div class="panel" role="tabpanel" id="panel-applied" aria-labelledby="tab-applied">
+          <pre class="screen"><!-- screen:applied --><span style="color:#414868">╭─</span><span style="color:#c0caf5;font-weight:700"> MindStash </span><span style="color:#414868">────────────────────╮</span><span style="color:#7aa2f7">╭─</span><span style="color:#7aa2f7;font-weight:700"> All </span><span style="color:#7aa2f7">────────────────────────────────────────────────────────────────────────</span><span style="color:#9aa5ce"> 4/4 </span><span style="color:#7aa2f7">─╮</span>
+<span style="color:#414868">│</span> <span style="color:#9aa5ce;font-weight:700">FINDINGS                      </span> <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#f7768e">●</span> 2 memories                                <span style="color:#9aa5ce">~/work/old-prototype </span> <span style="color:#e0af68">  project gone</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#7aa2f7;font-weight:700">● All                        4</span> <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#f7768e">●</span> skill "use-railway" is installed 2 times  <span style="color:#9aa5ce">global               </span> <span style="color:#bb9af7">duplicate ski…</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#e0af68">●</span> Stale                      1 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#e0af68">●</span> api-server-conventions                    <span style="color:#9aa5ce">~                    </span> <span style="color:#7dcfff">   wrong scope</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#7dcfff">●</span> Wrong scope                1 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7;background:#292e42">▌</span><span style="color:#bb9af7;background:#292e42"> </span><span style="color:#e0af68;background:#292e42">●</span><span style="background:#292e42"> </span><span style="color:#c0caf5;background:#292e42;font-weight:700">concise-responses ↔ prefers-short-answer…</span><span style="background:#292e42"> </span><span style="color:#9aa5ce;background:#292e42">~                    </span><span style="background:#292e42"> </span><span style="color:#bb9af7;background:#292e42">  look similar</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#bb9af7">●</span> Look similar               2 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#9aa5ce;font-weight:700">VIEWS                         </span> <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Browse all                 5 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Checks                     1 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Token cost                   <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">╰────────────────────────────────────────────────────────────────────────────────────╯</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│╭─</span><span style="color:#c0caf5;font-weight:700"> Preview </span><span style="color:#414868">──────────────────────────────────────────────────────────────────</span><span style="color:#9aa5ce"> 14/22 </span><span style="color:#414868">─╮</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#bb9af7;font-weight:700">concise-responses ↔ prefers-short-answers · 56% match</span>                              <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#e0af68">look similar · medium confidence · 040775</span>                                          <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5"> </span>                                                                                  <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce;font-weight:700">WHY FLAGGED</span>                                                                        <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5">These two memories share 56% of their wording and may say the same thing.</span>          <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5">Both load in ~.</span>                                                                    <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5">MindStash won't merge them; open both and keep the one you want.</span>                   <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5">Costs ~17 tokens per session.</span>                                                      <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5"> </span>                                                                                  <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce;font-weight:700">FILE 1 OF 2</span>                                                                        <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5;font-weight:700">concise-responses</span>                                                                  <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce">memory · ~ · Claude Code · ~17 tk/session</span>                                          <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#414868">│ </span><span style="color:#c0caf5">User wants short answers with no fluff; skip the long intros and get right to</span>    <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce">… more below (j/k)</span>                                                                 <span style="color:#414868">│</span>
+<span style="color:#414868">╰────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────╯</span>
+<span style="color:#1a1b26;background:#7aa2f7;font-weight:700"> NORMAL </span><span style="color:#c0caf5;background:#292e42"> All › 4/4                                         </span><span style="color:#7dcfff;background:#292e42"> Claude 248 · Codex 41 tk/session </span><span style="color:#c0caf5;background:#414868"> ? help  : cmd  ^p palette </span>
+<span style="color:#9ece6a">✓ 2 changes applied · saved ~37 tk/session · u to undo                                                                  </span>
+<!-- /screen:applied --></pre>
+          <p class="caption">Done, with a backup in <code>~/.mindstash/backups</code>. Press <code>u</code> to undo.</p>
+        </div>
+        <div class="panel" role="tabpanel" id="panel-cost" aria-labelledby="tab-cost">
+          <pre class="screen"><!-- screen:cost --><span style="color:#414868">╭─</span><span style="color:#c0caf5;font-weight:700"> MindStash </span><span style="color:#414868">────────────────────╮</span><span style="color:#7aa2f7">╭─</span><span style="color:#7aa2f7;font-weight:700"> Token cost </span><span style="color:#7aa2f7">───────────────────────────────────────────────────────────────────────╮</span>
+<span style="color:#414868">│</span> <span style="color:#9aa5ce;font-weight:700">FINDINGS                      </span> <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7;font-weight:700">Claude Code: every session loads ~248 tokens</span>                                       <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#c0caf5">●</span> All                        6 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#c0caf5"> 50 4 skill descriptions</span>                                                           <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#e0af68">●</span> Stale                      3 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#9aa5ce"> 38 user (3)</span>                                                                       <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#7dcfff">●</span> Wrong scope                1 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#9aa5ce"> 12 plugin:railway (1)</span>                                                             <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#bb9af7">●</span> Look similar               2 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#c0caf5"> 198 global CLAUDE.md</span>                                                              <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#9aa5ce"> Per project (baseline + CLAUDE.md files + MEMORY.md + project skills)</span>             <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#9aa5ce;font-weight:700">VIEWS                         </span> <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#c0caf5"> ~/work/api-server 351 CLAUDE.md 52 · MEMORY.md 51</span>                                 <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Browse all                 5 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#c0caf5"> ~ 334 MEMORY.md 86</span>                                                                <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Checks                     1 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#c0caf5"> </span>                                                                                  <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#7aa2f7;font-weight:700">◇ Token cost                  </span> <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7;font-weight:700">Codex: every session loads ~41 tokens</span>                                              <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#c0caf5"> 13 1 skill description</span>                                                            <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#9aa5ce"> 13 user (1)</span>                                                                       <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#c0caf5"> 28 global AGENTS.md</span>                                                               <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#c0caf5"> </span>                                                                                  <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#c0caf5">Flagged items cost ~119 tokens per session.</span>                                        <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span>                                                                                    <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">╰────────────────────────────────╯</span><span style="color:#7aa2f7">╰────────────────────────────────────────────────────────────────────────────────────╯</span>
+<span style="color:#1a1b26;background:#7aa2f7;font-weight:700"> NORMAL </span><span style="color:#c0caf5;background:#292e42"> Token cost                                        </span><span style="color:#7dcfff;background:#292e42"> Claude 248 · Codex 41 tk/session </span><span style="color:#c0caf5;background:#414868"> ? help  : cmd  ^p palette </span>
+<span style="color:#9aa5ce">space select · d delete · a archive · m move · i ignore · e edit · ⏎ open · / search                                    </span>
+<!-- /screen:cost --></pre>
+          <p class="caption">What each agent loads at the start of every session, per project, and how much of it is flagged.</p>
+        </div>
+        <div class="panel" role="tabpanel" id="panel-palette" aria-labelledby="tab-palette">
+          <pre class="screen"><!-- screen:palette --><span style="color:#414868">╭─</span><span style="color:#c0caf5;font-weight:700"> MindStash </span><span style="color:#414868">────────────────────╮</span><span style="color:#7aa2f7">╭─</span><span style="color:#7aa2f7;font-weight:700"> All </span><span style="color:#7aa2f7">────────────────────────────────────────────────────────────────────────</span><span style="color:#9aa5ce"> 5/6 </span><span style="color:#7aa2f7">─╮</span>
+<span style="color:#414868">│</span> <span style="color:#9aa5ce;font-weight:700">FINDINGS                      </span> <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#f7768e">●</span> 2 memories                                <span style="color:#9aa5ce">~/work/old-prototype </span> <span style="color:#e0af68">  project gone</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#7aa2f7;font-weight:700">● All                        6</span> <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#f7768e">●</span> old-api-endpoints                         <span style="color:#9aa5ce">~/work/api-server    </span> <span style="color:#e0af68">  missing file</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#e0af68">●</span> Stale                      3 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#f7768e">●</span> skill "use-railway" is installed 2 times  <span style="color:#9aa5ce">global               </span> <span style="color:#bb9af7">duplicate ski…</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#7dcfff">●</span> Wrong scope                1 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#e0af68">●</span> api-server-conventions                    <span style="color:#9aa5ce">~                    </span> <span style="color:#7dcfff">   wrong scope</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#bb9af7">●</span> Look similar               2 <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7;background:#292e42">▌</span><span style="color:#bb9af7;background:#292e42"> </span><span style="color:#e0af68;background:#292e42">●</span><span style="background:#292e42"> </span><span style="color:#c0caf5;background:#292e42;font-weight:700">hackathon-notes                          </span><span style="background:#292e42"> </span><span style="color:#9aa5ce;background:#292e42">~                    </span><span style="background:#292e42"> </span><span style="color:#e0af68;background:#292e42">     past date</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#e0af68">●</span> concise-responses ↔ prefers-short-answer… <span style="color:#9aa5ce">~                    </span> <span style="color:#bb9af7">  look similar</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#9aa5ce;font-weight:700">VIEWS               </span><span style="color:#bb9af7">╭─</span><span style="color:#bb9af7;font-weight:700"> Go to anything </span><span style="color:#bb9af7">─────────────────────────────────────────────────────────╮</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Browse all        <span style="color:#bb9af7">│ </span><span style="color:#7aa2f7;font-weight:700">&gt; sim▏                                                                  </span><span style="color:#bb9af7"> │</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Checks            <span style="color:#bb9af7">│ </span><span style="color:#c0caf5">                                                                        </span><span style="color:#bb9af7"> │</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Token cost        <span style="color:#bb9af7">│ </span><span style="color:#7aa2f7;background:#292e42;font-weight:700">▌ Go to Look similar 2 findings                                         </span><span style="color:#bb9af7"> │</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#bb9af7">│ </span><span style="color:#c0caf5"> skill "use-railway" is installed 2 times — ski… duplicate skill        </span><span style="color:#bb9af7"> │</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#bb9af7">│ </span><span style="color:#c0caf5"> concise-responses ↔ prefers-short-answers · 56… look similar           </span><span style="color:#bb9af7"> │</span><span style="color:#7aa2f7">─────────────────────╯</span>
+<span style="color:#414868">│</span>                     <span style="color:#bb9af7">│ </span><span style="color:#c0caf5">                                                                        </span><span style="color:#bb9af7"> │</span><span style="color:#414868">─────────────</span><span style="color:#9aa5ce"> 14/18 </span><span style="color:#414868">─╮</span>
+<span style="color:#414868">│</span>                     <span style="color:#bb9af7">│ </span><span style="color:#9aa5ce">⏎ run ↑↓ move Esc close                                                 </span><span style="color:#bb9af7"> │</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#bb9af7">╰──────────────────────────────────────────────────────────────────────────╯</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5"> </span>                                                                                  <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce;font-weight:700">WHY FLAGGED</span>                                                                        <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5">Mentions "Team hackathon Oct 15–18 2026.", which ended 17 days ago.</span>                <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5">Costs ~18 tokens per session.</span>                                                      <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5"> </span>                                                                                  <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce;font-weight:700">FILE</span>                                                                               <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#c0caf5;font-weight:700">hackathon-notes</span>                                                                    <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce">memory · ~ · Claude Code · ~18 tk/session</span>                                          <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#414868">│ </span><span style="color:#c0caf5">Team hackathon Oct 15–18 2026. Demo on Friday at booth 12.</span>                       <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#414868">│ </span><span style="color:#c0caf5">Keep answers short during the event.</span>                                             <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#414868">│ </span><span style="color:#c0caf5"> </span>                                                                                <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce">… more below (j/k)</span>                                                                 <span style="color:#414868">│</span>
+<span style="color:#414868">╰────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────╯</span>
+<span style="color:#1a1b26;background:#7aa2f7;font-weight:700"> NORMAL </span><span style="color:#c0caf5;background:#292e42"> All › 5/6                                         </span><span style="color:#7dcfff;background:#292e42"> Claude 248 · Codex 41 tk/session </span><span style="color:#c0caf5;background:#414868"> ? help  : cmd  ^p palette </span>
+<span style="color:#9aa5ce">space select · d delete · a archive · m move · i ignore · e edit · ⏎ open · / search                                    </span>
+<!-- /screen:palette --></pre>
+          <p class="caption">Ctrl-P jumps to any finding, view or project.</p>
+        </div>
+        <div class="panel" role="tabpanel" id="panel-help" aria-labelledby="tab-help">
+          <pre class="screen"><!-- screen:help --><span style="color:#414868">╭─</span><span style="color:#c0caf5;font-weight:700"> MindStash </span><span style="color:#414868">────────────────────╮</span><span style="color:#7aa2f7">╭─</span><span style="color:#7aa2f7;font-weight:700"> All </span><span style="color:#7aa2f7">────────────────────────────────────────────────────────────────────────</span><span style="color:#9aa5ce"> 5/6 </span><span style="color:#7aa2f7">─╮</span>
+<span style="color:#414868">│</span> <span style="color:#9aa5ce;font-weight:700">FINDINGS                      </span> <span style="color:#414868">│</span><span style="color:#7aa2f7">│</span> <span style="color:#7aa2f7"> </span><span style="color:#bb9af7"> </span><span style="color:#f7768e">●</span> 2 memories                                <span style="color:#9aa5ce">~/work/old-prototype </span> <span style="color:#e0af68">  project gone</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#7aa2f7;font-weight:700">● All               </span><span style="color:#7aa2f7">╭─</span><span style="color:#7aa2f7;font-weight:700"> Keys </span><span style="color:#7aa2f7">───────────────────────────────────────────────────────────────────╮</span><span style="color:#9aa5ce">r    </span> <span style="color:#e0af68">  missing file</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#e0af68">●</span> Stale             <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">j k ↓ ↑ move (counts work: 5j)                                          </span><span style="color:#7aa2f7"> │</span><span style="color:#9aa5ce">     </span> <span style="color:#bb9af7">duplicate ski…</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#7dcfff">●</span> Wrong scope       <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">gg G top / bottom                                                       </span><span style="color:#7aa2f7"> │</span><span style="color:#9aa5ce">     </span> <span style="color:#7dcfff">   wrong scope</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#bb9af7">●</span> Look similar      <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">^d ^u half page down / up                                               </span><span style="color:#7aa2f7"> │</span><span style="color:#9aa5ce;background:#292e42">     </span><span style="background:#292e42"> </span><span style="color:#e0af68;background:#292e42">     past date</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">h l ← → focus sidebar · list · detail                                   </span><span style="color:#7aa2f7"> │</span><span style="color:#9aa5ce">     </span> <span style="color:#bb9af7">  look similar</span> <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> <span style="color:#9aa5ce;font-weight:700">VIEWS               </span><span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">Enter open                                                              </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Browse all        <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">Esc back, clear search or selection                                     </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Checks            <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">Tab switch sidebar / list                                               </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span> ◇ Token cost        <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">[ ] previous / next sidebar entry                                       </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">Space V select row / all rows                                           </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#7aa2f7">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">d a m i delete · archive · move · not a problem                         </span><span style="color:#7aa2f7"> │─────────────────────╯</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">e open in $EDITOR                                                       </span><span style="color:#7aa2f7"> │</span><span style="color:#414868">─────────────</span><span style="color:#9aa5ce"> 14/18 </span><span style="color:#414868">─╮</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">u undo last change                                                      </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">/ search this list                                                      </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">: command (:cost :checks :undo :q …)                                    </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">^p palette: jump to anything                                            </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">\ hide / show sidebar                                                   </span><span style="color:#7aa2f7"> │</span><span style="color:#c0caf5"> ago.</span>                <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">r rescan                                                                </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">q quit                                                                  </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">                                                                        </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#9aa5ce">Nothing changes without a confirm; every fix is backed up and undoable. </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#9aa5ce">Archive hides an item from the agent but keeps a copy in ~/.mindstash.  </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#c0caf5">                                                                        </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">│ </span><span style="color:#9aa5ce">Esc close                                                               </span><span style="color:#7aa2f7"> │</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                     <span style="color:#7aa2f7">╰──────────────────────────────────────────────────────────────────────────╯</span>                     <span style="color:#414868">│</span>
+<span style="color:#414868">│</span>                                <span style="color:#414868">││</span> <span style="color:#9aa5ce">… more below (j/k)</span>                                                                 <span style="color:#414868">│</span>
+<span style="color:#414868">╰────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────╯</span>
+<span style="color:#1a1b26;background:#7aa2f7;font-weight:700"> NORMAL </span><span style="color:#c0caf5;background:#292e42"> All › 5/6                                         </span><span style="color:#7dcfff;background:#292e42"> Claude 248 · Codex 41 tk/session </span><span style="color:#c0caf5;background:#414868"> ? help  : cmd  ^p palette </span>
+<span style="color:#9aa5ce">space select · d delete · a archive · m move · i ignore · e edit · ⏎ open · / search                                    </span>
+<!-- /screen:help --></pre>
+          <p class="caption">Vim keys throughout: counts, <code>gg</code> and <code>G</code>, <code>/</code> to search, <code>:</code> for commands.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="rules">
+  <div class="wrap section">
+    <div class="section-head">
+      <span class="eyebrow">02 / what it flags</span>
+      <h2>Nine ways memory goes wrong</h2>
+      <p class="lead">Each rule has a confidence level, so you know which findings to act on first.</p>
+    </div>
+    <table class="rules">
+      <thead><tr><th scope="col">Rule</th><th scope="col">Confidence</th><th scope="col">Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>missing-project</code></td><td><span class="conf high">high</span></td><td>Memories for a project folder that's gone.</td></tr>
+        <tr><td><code>missing-path</code></td><td><span class="conf high">high</span></td><td>Mentions a file or folder that no longer exists, checked against the repo's git files.</td></tr>
+        <tr><td><code>past-event</code></td><td><span class="conf">medium</span></td><td>A date that was coming up when the memory was saved, and has now passed.</td></tr>
+        <tr><td><code>wrong-scope</code></td><td><span class="conf">medium</span></td><td>A note about one project saved in a parent folder like <code>~</code>, so it loads everywhere. Can be moved.</td></tr>
+        <tr><td><code>similar</code> · <code>skill-duplicate</code></td><td><span class="conf">medium–high</span></td><td>Near-duplicate memories, and skills installed twice or overlapping. Suggested, never merged.</td></tr>
+        <tr><td><code>relearned</code></td><td><span class="conf">medium</span></td><td>Looks like a memory you deleted with MindStash. The agent saved it again.</td></tr>
+        <tr><td><code>too-long</code> · <code>unindexed</code></td><td><span class="conf high">high</span></td><td><code>MEMORY.md</code> over 200 lines, links to missing files, or memory files it doesn't list.</td></tr>
+        <tr><td><code>agents-too-long</code></td><td><span class="conf high">high</span></td><td><code>AGENTS.md</code> files for a folder over the 32 KiB Codex reads.</td></tr>
+        <tr><td><code>contradiction</code></td><td><span class="conf">medium</span></td><td>Two notes that load together disagree, as judged by your own agent.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="safety">
+  <div class="wrap section">
+    <div class="section-head">
+      <span class="eyebrow">03 / safety</span>
+      <h2>Built to be trusted with your files</h2>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#7aa2f7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>
+        <h3>Asks first</h3>
+        <p>Nothing changes until you confirm. Fixes only take finding ids from the latest scan, and refuse files that changed since.</p>
+      </div>
+      <div class="card">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#7aa2f7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-5 3-10.5 6"/></svg>
+        <h3>Backed up in git</h3>
+        <p>Every fix is saved to <code>~/.mindstash/backups</code> before it runs. <code>mindstash undo</code> puts it back.</p>
+      </div>
+      <div class="card">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#7aa2f7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="m3 3 18 18"/></svg>
+        <h3>Never rewrites a word</h3>
+        <p>Look-alike memories are shown side by side. MindStash suggests a merge; you make it in your own editor.</p>
+      </div>
+      <div class="card">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#7aa2f7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></svg>
+        <h3>Leaves your agents alone</h3>
+        <p>Claude Code and Codex keep saving memory their own way. No new store, nothing to sync.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="agent">
+  <div class="wrap section split">
+    <div class="section-head">
+      <span class="eyebrow">04 / from your agent</span>
+      <h2>Or just ask your agent</h2>
+      <p class="lead">One command adds <code>/mindstash</code> to Claude Code and <code>$mindstash</code> to Codex. Your agent runs the scan, checks each finding against the repo and waits for your OK. No API key: the agent you already use judges contradictions.</p>
+      <div class="install" style="align-self: flex-start;">
+        <span><span class="prompt">$ </span><code>npx mindstash install-skill</code></span>
+        <button class="copy" type="button" data-copy="npx mindstash install-skill" aria-label="Copy npx mindstash install-skill">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+          <span>Copy</span>
+        </button>
+      </div>
+    </div>
+<pre class="chat" aria-label="Example chat with an agent using the MindStash skill"><span class="you">&gt;</span> <b>/mindstash</b>
+
+<span class="muted">●</span> Scanned 39 memories and 12 skills (~7,400 tokens per session).
+  5 things look off:
+
+  1. hackathon-notes <span class="muted">(~)</span>: mentions Oct 15–18, ended 17 days ago
+  2. old-api-endpoints <span class="muted">(~/work/api-server)</span>: src/api/v1/ is gone
+  3. node-version ↔ ci-setup: one says Node 16, the other Node 22
+  4. prefers-short-answers ↔ concise-responses: look like duplicates
+  5. MEMORY.md is 240 lines; only the first 200 load
+
+  Want me to delete 1 and 2? For 4, I can open both files.
+
+<span class="you">&gt;</span> <b>delete 1 and 2, ignore 3</b>
+
+<span class="muted">●</span> Done. Deleted 2 memories, marked 1 as not a problem.
+  Saves ~620 tokens per session. Say "undo" to revert.</pre>
+  </div>
+</section>
+
+<section class="final">
+  <div class="wrap">
+    <h2>Run it once. See what's in there.</h2>
+    <p class="lead">Nothing to install globally, no account. It reads your agent folders and shows you what it found.</p>
+    <div class="install">
+      <span><span class="prompt">$ </span><code>npx mindstash</code></span>
+      <button class="copy" type="button" data-copy="npx mindstash" aria-label="Copy npx mindstash">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+        <span>Copy</span>
+      </button>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span style="font-family: var(--display); font-weight: 700; color: var(--fg-2);">mindstash</span>
+    <nav aria-label="Footer">
+      <a href="https://github.com/MaheshMoholkar/mindstash">GitHub</a>
+      <a href="https://www.npmjs.com/package/mindstash">npm</a>
+      <a href="https://github.com/MaheshMoholkar/mindstash/issues">Issues</a>
+    </nav>
+    <span>MIT License · Mahesh Moholkar</span>
+  </div>
+</footer>
+
+<p class="sr-only" aria-live="polite" id="copy-status"></p>
+
+<script>
+  // Copy buttons
+  const status = document.getElementById('copy-status');
+  for (const btn of document.querySelectorAll('[data-copy]')) {
+    btn.addEventListener('click', async () => {
+      const text = btn.dataset.copy;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const ta = Object.assign(document.createElement('textarea'), { value: text });
+        ta.style.cssText = 'position:fixed;opacity:0';
+        document.body.append(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      }
+      const label = btn.querySelector('span');
+      label.textContent = 'Copied';
+      btn.classList.add('copied');
+      status.textContent = `Copied ${text}`;
+      clearTimeout(btn._t);
+      btn._t = setTimeout(() => {
+        label.textContent = 'Copy';
+        btn.classList.remove('copied');
+      }, 1600);
+    });
+  }
+
+  // Screen tour: tabs show one screen at a time (all screens stay visible without JS).
+  const tablist = document.querySelector('.tabs');
+  const tabs = [...tablist.querySelectorAll('[role="tab"]')];
+  const select = (tab, focus) => {
+    for (const t of tabs) {
+      const on = t === tab;
+      t.setAttribute('aria-selected', String(on));
+      t.tabIndex = on ? 0 : -1;
+      document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+    }
+    if (focus) tab.focus();
+  };
+  tablist.hidden = false;
+  select(tabs[1], false);
+  tablist.addEventListener('click', (e) => {
+    const tab = e.target.closest('[role="tab"]');
+    if (tab) select(tab, false);
+  });
+  tablist.addEventListener('keydown', (e) => {
+    const i = tabs.indexOf(document.activeElement);
+    if (i < 0) return;
+    const next = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[e.key];
+    if (next === undefined) return;
+    e.preventDefault();
+    select(tabs[(next + tabs.length) % tabs.length], true);
+  });
+</script>
+</body>
+</html>
