@@ -22,3 +22,10 @@ Rejected:
 - MindMeld, MindCraft, MindLayer: taken by well-known projects or packages.
 - AgentMemory: 29.7k★ project.
 - Backup: SharedMind (npm and PyPI free).
+
+Rechecked Nov 4, 2026 (kept MindStash):
+- Supermind: taken on npm (unused 2022 placeholder, so `npx supermind` would run it) and PyPI; `supermind-claude` on npm is a Claude Code skill engine.
+- Free on npm and PyPI with no notable GitHub project: superstash, supersift, superscope, superrecall, superprune, superlobe.
+- Memory names free on npm and PyPI: memtidy, memorytidy, memoryaudit, memorydoctor, memjanitor, memoryhygiene. Taken or crowded: memscope, memaudit, memsift (MemSifter, 70★), memwise.
+- New same-space projects found while checking (all 0★): [memlint](https://github.com/jacelovehaha/memlint) "hygiene linter for AI-agent memory files", [memorylint](https://github.com/Balaji91221/memorylint) "evidence-backed validation of repository memories", [memdoctor](https://github.com/npoitevin-max/memdoctor) "check and repair AI agent long-term memory stores". Worth a closer look before launch.
+- Avoid: supermem (next to supermemory, 31k★; PyPI taken), supercontext (an AI-agent context engine), superknow (close to IBM SuperKnowa), superctx (npm taken).

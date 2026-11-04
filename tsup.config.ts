@@ -8,6 +8,8 @@ export default defineConfig({
   clean: true,
   minify: true,
   // One bundled file so `npx mindstash` starts fast with no install step.
-  noExternal: [/.*/],
+  // Ink loads devtools only when DEV=true; leave that one import unbundled.
+  noExternal: [/^(?!react-devtools-core$).*/],
+  external: ['react-devtools-core'],
   banner: { js: '#!/usr/bin/env node\nimport { createRequire as __cr } from "module"; const require = __cr(import.meta.url);' },
 });

@@ -103,7 +103,15 @@ async function runScan(opts: { json?: boolean; full?: boolean; includeIgnored?: 
   }
 }
 
-scanCommand(program).action(runScan);
+// No command: interactive UI in a terminal, plain report anywhere else.
+scanCommand(program).action(async (opts: { json?: boolean; full?: boolean; includeIgnored?: boolean }) => {
+  const interactive =
+    process.stdout.isTTY && process.stdin.isTTY && !opts.json && !opts.full && !process.env.CI && process.env.TERM !== 'dumb';
+  if (!interactive) return runScan(opts);
+  // Loaded only here, so plain commands (and hooks) never pay for Ink and React.
+  const { runTui } = await import('../tui/run.js');
+  await runTui(defaultContext(), selfCommand());
+});
 scanCommand(program.command('scan').description('scan memories and skills and report what looks wrong')).action(runScan);
 
 program

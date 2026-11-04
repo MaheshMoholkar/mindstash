@@ -32,7 +32,7 @@ export function itemsOf(f: Finding, r: ScanResult): Item[] {
   return f.itemIds.map((id) => byId.get(id)).filter((i): i is Item => Boolean(i));
 }
 
-function subject(f: Finding, r: ScanResult): { name: string; scope: string } {
+export function subject(f: Finding, r: ScanResult): { name: string; scope: string } {
   const items = itemsOf(f, r);
   const first = items[0];
   if (!first) return { name: '?', scope: '' };

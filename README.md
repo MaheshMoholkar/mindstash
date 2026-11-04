@@ -4,13 +4,14 @@
 
 Coding agents (Claude Code, Codex, Cursor, Gemini CLI, ...) save memories and load skills on their own. Over time these pile up: some go stale, some land in the wrong scope, some repeat or contradict each other, and the user has no single place to see or fix them. MindStash scans that setup, explains what looks wrong, and helps clean it up, while leaving each agent's own memory system untouched.
 
-> Status: v0.1. Claude Code only, plain CLI (the interactive terminal UI comes next). Not on npm yet.
+> Status: v0.1. Claude Code only. Not on npm yet.
 
 ## Try it
 
 ```sh
 npm install && npm run build
-node dist/cli.js            # scan and report (same as `scan`)
+node dist/cli.js            # interactive terminal UI (plain report when not in a terminal)
+node dist/cli.js scan       # plain report
 node dist/cli.js show <id>  # why something was flagged, with the file
 node dist/cli.js cost       # tokens loaded per session, per project
 ```
@@ -47,7 +48,7 @@ npm run dev -- scan
 
 Env: `CLAUDE_CONFIG_DIR` (default `~/.claude`), `MINDSTASH_HOME` (default `~/.mindstash`).
 
-Code: `src/core` (scan, rules, fixes, backup; agent-agnostic), `src/adapters` (one per agent), `src/cli`.
+Code: `src/core` (scan, rules, fixes, backup; agent-agnostic), `src/adapters` (one per agent), `src/cli`, `src/tui` (Ink screens, loaded only for the interactive UI).
 
 ## Docs
 
