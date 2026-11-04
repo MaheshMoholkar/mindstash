@@ -54,6 +54,19 @@ Run it with: \`${cmd}\`
 5. Only after the user agrees, run \`${cmd} apply --yes --delete <ids> --archive <ids> --move <ids> --ignore <ids>\` with the ids they approved.
 6. Report what changed and the tokens saved. If the user says "undo", run \`${cmd} undo --yes\`.
 
+## Checking for contradictions
+
+MindStash can't tell if two notes disagree; it finds candidate pairs and you judge them.
+Do this when the scan reports pairs that "may disagree", or when the user asks.
+
+1. Run \`${cmd} check --json\`. Each pair has \`id\`, \`cue\` (why it was picked) and two sides with \`name\`, \`path\` and \`snippet\`.
+2. For each pair, read both snippets (open the files if the snippet isn't enough) and decide:
+   - they give opposite instructions or facts about the same thing → \`${cmd} judge <id> --conflict "<one line: how they disagree>"\`
+   - they say the same thing → \`${cmd} judge <id> --duplicate "<one line>"\`
+   - otherwise (different topics, or consistent) → \`${cmd} judge <id> --ok\`
+   Recording a verdict only updates MindStash's own notes; no memory files change, so no confirmation is needed for this step.
+3. Tell the user which pairs disagree or repeat, quoting both sides briefly, and suggest which to keep. Do not edit the files unless the user asks.
+
 ## Rules
 
 - Never apply a fix the user didn't approve in this conversation.

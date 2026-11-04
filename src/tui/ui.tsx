@@ -92,4 +92,7 @@ export const RULE_LABEL: Record<string, string> = {
   'too-long': 'too long',
   'broken-link': 'broken link',
   unindexed: 'not in index',
+  contradiction: 'contradiction',
+  'duplicate-checked': 'duplicate',
+  'agents-too-long': 'AGENTS.md too long',
 };

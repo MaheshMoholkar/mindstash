@@ -8,6 +8,7 @@ import { missingPath, missingProject, pastEvent } from './rules/stale.js';
 import { agentsTooLong, brokenLink, tooLong, unindexed } from './rules/index-rules.js';
 import { wrongScope } from './rules/scope.js';
 import { relearned, similarMemories, skillOverlap } from './rules/similar.js';
+import { judged, pending } from './contradictions.js';
 
 export const RULES = [
   missingProject,
@@ -16,6 +17,7 @@ export const RULES = [
   wrongScope,
   similarMemories,
   skillOverlap,
+  judged,
   relearned,
   tooLong,
   brokenLink,
@@ -154,5 +156,6 @@ export async function scan(ctx: ScanContext, opts: ScanOptions = {}): Promise<Sc
     items,
     findings,
     ignoredCount: all.length - all.filter((f) => !state.ignored[f.id]).length,
+    pendingChecks: pending(state, items, projects).total,
   };
 }

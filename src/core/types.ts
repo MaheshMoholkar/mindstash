@@ -60,7 +60,7 @@ export interface Item {
 
 export type Confidence = 'high' | 'medium' | 'low';
 
-export type Category = 'stale' | 'scope' | 'similar' | 'relearned' | 'index';
+export type Category = 'stale' | 'scope' | 'similar' | 'contradiction' | 'relearned' | 'index';
 
 export type FixKind = 'delete' | 'archive' | 'move' | 'ignore';
 
@@ -127,4 +127,6 @@ export interface ScanResult {
   findings: Finding[];
   /** Findings hidden because the user marked them "not a problem". */
   ignoredCount: number;
+  /** Possible contradictions waiting for the user's agent to judge (`mindstash check`). */
+  pendingChecks: number;
 }

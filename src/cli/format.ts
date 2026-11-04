@@ -7,6 +7,7 @@ export const CATEGORIES: { id: Category; label: string; hint: string }[] = [
   { id: 'stale', label: 'Stale', hint: 'past dates, missing files' },
   { id: 'scope', label: 'Wrong scope', hint: 'about one project, saved in a parent folder' },
   { id: 'similar', label: 'Look similar', hint: 'possible duplicates, overlapping skills' },
+  { id: 'contradiction', label: 'Contradiction', hint: 'two notes disagree (checked by your agent)' },
   { id: 'relearned', label: 'Re-learned', hint: 'deleted before, saved again' },
   { id: 'index', label: 'Index problems', hint: 'index or AGENTS.md too long, out of sync' },
 ];
@@ -37,7 +38,7 @@ export function subject(f: Finding, r: ScanResult): { name: string; scope: strin
   const first = items[0];
   if (!first) return { name: '?', scope: '' };
   if (f.rule === 'missing-project') return { name: plural(items.length, 'memory', 'memories'), scope: first.scope.label };
-  if (f.rule === 'similar' || f.rule === 'skill-overlap' || f.rule === 'skill-duplicate') {
+  if (['similar', 'skill-overlap', 'skill-duplicate', 'contradiction', 'duplicate-checked'].includes(f.rule)) {
     return { name: '', scope: first.scope.label };
   }
   return { name: first.name, scope: first.scope.label };
@@ -72,6 +73,9 @@ export function scanReport(r: ScanResult, opts: { full?: boolean; perCategory?: 
       const visible = 3 + 2 + 2 + 2 + 15 + c.hint.length;
       out.push(left + ' '.repeat(Math.max(2, width() - 8 - visible)) + (tk ? n(tk) : '-').padStart(6));
     }
+  }
+  if (r.pendingChecks) {
+    out.push(chalk.dim(`   ○ ${plural(r.pendingChecks, 'pair')} may disagree · ask your agent to check (mindstash check)`));
   }
   const flaggedIds = new Set(r.findings.flatMap((f) => f.itemIds));
   const fine = r.items.filter((i) => i.kind === 'memory' && !flaggedIds.has(i.id)).length;

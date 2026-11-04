@@ -50,21 +50,49 @@ const Deleted = z.object({
   sig: z.array(z.number()),
 });
 
+/** One side of a pair the agent is asked to compare. */
+const Side = z.object({
+  itemId: z.string(),
+  agent: z.string(),
+  kind: z.string(),
+  name: z.string(),
+  scope: z.string(),
+  path: z.string(),
+  hash: z.string(),
+  snippet: z.string(),
+});
+
+const Pair = z.object({ id: z.string(), a: Side, b: Side, shared: z.array(z.string()), cue: z.string(), score: z.number() });
+
+/** The agent's call on a pair. Only valid while both files are unchanged (hashes match). */
+const Verdict = z.object({
+  verdict: z.enum(['conflict', 'duplicate', 'ok']),
+  reason: z.string(),
+  at: z.string(),
+  hashes: z.tuple([z.string(), z.string()]),
+  pair: Pair,
+});
+
 const StateSchema = z.object({
   version: z.literal(1),
   ignored: z.record(z.string(), z.object({ rule: z.string(), title: z.string(), at: z.string() })),
   deleted: z.array(Deleted),
   lastScan: z.object({ at: z.string(), findings: z.array(StoredFinding) }).optional(),
   history: z.array(Operation),
+  lastCheck: z.object({ at: z.string(), pairs: z.array(Pair) }).optional(),
+  verdicts: z.record(z.string(), Verdict).default({}),
 });
 
 export type State = z.infer<typeof StateSchema>;
 export type StoredFinding = z.infer<typeof StoredFinding>;
 export type StoredTarget = z.infer<typeof Target>;
 export type Operation = z.infer<typeof Operation>;
+export type Pair = z.infer<typeof Pair>;
+export type PairSide = z.infer<typeof Side>;
+export type Verdict = z.infer<typeof Verdict>;
 
 export function emptyState(): State {
-  return { version: 1, ignored: {}, deleted: [], history: [] };
+  return { version: 1, ignored: {}, deleted: [], history: [], verdicts: {} };
 }
 
 export function statePath(mindstashDir: string): string {

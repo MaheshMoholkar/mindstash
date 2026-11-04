@@ -23,7 +23,7 @@ export function Detail({ nav, id }: { nav: Nav; id: string }) {
   const [offset, setOffset] = useState(0);
   const f = nav.result.findings.find((x) => x.id === id);
   const items = f ? itemsOf(f, nav.result) : [];
-  const sideBySide = items.length === 2 && (f?.rule === 'similar' || f?.rule === 'skill-overlap');
+  const sideBySide = items.length === 2 && ['similar', 'skill-overlap', 'contradiction', 'duplicate-checked'].includes(f?.rule ?? '');
 
   useInput((input, key) => {
     if (!f) return nav.common(input, { escape: true });

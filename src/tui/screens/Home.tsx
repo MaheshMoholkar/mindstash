@@ -112,6 +112,9 @@ export function Home({ nav }: { nav: Nav }) {
         </>
       )}
       <Text> </Text>
+      {r.pendingChecks ? (
+        <Text dimColor>   ○ {plural(r.pendingChecks, 'pair')} may disagree · ask your agent to check (/mindstash, $mindstash)</Text>
+      ) : null}
       <Text color="green">   ✓ {plural(fine, 'memory looks', 'memories look')} fine</Text>
       {r.ignoredCount ? <Text dimColor>   {plural(r.ignoredCount, 'finding')} marked "not a problem"</Text> : null}
       <Hints

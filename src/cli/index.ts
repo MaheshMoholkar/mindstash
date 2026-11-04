@@ -6,8 +6,9 @@ import chalk from 'chalk';
 import { defaultContext, scan } from '../core/scan.js';
 import { apply, describe, FixError, plan, undo, type Requests } from '../core/fix.js';
 import { cost } from '../core/cost.js';
-import { loadState } from '../core/state.js';
-import { tildify } from '../core/text.js';
+import { loadState, saveState } from '../core/state.js';
+import { pending } from '../core/contradictions.js';
+import { clip, tildify } from '../core/text.js';
 import type { Finding, ScanResult } from '../core/types.js';
 import { costReport, itemsOf, scanReport, showFinding } from './format.js';
 import { installSkills, skillInstalled } from './skill.js';
@@ -41,6 +42,7 @@ function summaryJson(r: ScanResult) {
     skills: r.items.filter((i) => i.kind === 'skill').length,
     findings: r.findings.length,
     ignored: r.ignoredCount,
+    pendingChecks: r.pendingChecks,
     byCategory,
     flaggedTokens: r.findings.reduce((n, f) => n + f.tokens, 0),
   };
@@ -178,6 +180,71 @@ program
       }
       throw e;
     }
+  });
+
+program
+  .command('check')
+  .description('list pairs that may contradict each other, for your agent to judge')
+  .option('--json', 'machine-readable output')
+  .action(async (opts: { json?: boolean }) => {
+    const ctx = defaultContext();
+    const r = await scan(ctx);
+    const state = loadState(ctx.mindstashDir);
+    const { pairs, total } = pending(state, r.items, r.projects);
+    state.lastCheck = { at: ctx.now.toISOString(), pairs };
+    saveState(ctx.mindstashDir, state);
+    if (opts.json) {
+      console.log(JSON.stringify({ at: ctx.now, pending: total, pairs }, null, 2));
+      return;
+    }
+    if (!pairs.length) {
+      console.log(chalk.green(' ✓ No pairs waiting to be checked.'));
+      return;
+    }
+    console.log(` ${chalk.bold(`${total} pair${total === 1 ? '' : 's'} may disagree`)}${total > pairs.length ? chalk.dim(` (showing ${pairs.length})`) : ''}`);
+    console.log(chalk.dim(' MindStash only finds candidates. Ask your agent (/mindstash in Claude Code, $mindstash in Codex) to judge them.\n'));
+    for (const p of pairs) {
+      console.log(`   ${chalk.cyan(p.id)}  ${chalk.dim(p.cue)}`);
+      console.log(`     ${chalk.bold(p.a.name)} ${chalk.dim(p.a.scope)}: ${clip(p.a.snippet, 90)}`);
+      console.log(`     ${chalk.bold(p.b.name)} ${chalk.dim(p.b.scope)}: ${clip(p.b.snippet, 90)}`);
+    }
+  });
+
+program
+  .command('judge <id>')
+  .description("record your agent's verdict on a pair from `mindstash check`")
+  .option('--conflict <reason>', 'the two disagree; say how')
+  .option('--duplicate <reason>', 'they say the same thing')
+  .option('--ok [reason]', 'no problem')
+  .option('--clear', 'forget the verdict')
+  .action((id: string, opts: { conflict?: string; duplicate?: string; ok?: string | boolean; clear?: boolean }) => {
+    const ctx = defaultContext();
+    const state = loadState(ctx.mindstashDir);
+    if (opts.clear) {
+      const had = Boolean(state.verdicts[id]);
+      delete state.verdicts[id];
+      saveState(ctx.mindstashDir, state);
+      console.log(had ? ' ✓ Verdict cleared.' : ' No verdict for that id.');
+      return;
+    }
+    const given = [opts.conflict !== undefined, opts.duplicate !== undefined, opts.ok !== undefined].filter(Boolean).length;
+    if (given !== 1) {
+      console.error('Give exactly one of --conflict "<reason>", --duplicate "<reason>" or --ok.');
+      process.exitCode = 1;
+      return;
+    }
+    const pair = state.lastCheck?.pairs.find((p) => p.id === id);
+    if (!pair) {
+      console.error(`Unknown pair "${id}". Ids come from the latest \`mindstash check\`.`);
+      process.exitCode = 1;
+      return;
+    }
+    const verdict = opts.conflict !== undefined ? 'conflict' : opts.duplicate !== undefined ? 'duplicate' : 'ok';
+    const reason = (opts.conflict ?? opts.duplicate ?? (typeof opts.ok === 'string' ? opts.ok : '')).trim() || 'Checked; no problem.';
+    state.verdicts[id] = { verdict, reason, at: ctx.now.toISOString(), hashes: [pair.a.hash, pair.b.hash], pair };
+    saveState(ctx.mindstashDir, state);
+    const label = { conflict: 'conflict', duplicate: 'duplicate', ok: 'no problem' }[verdict];
+    console.log(chalk.green(` ✓ Recorded ${id} as ${label}.`) + (verdict === 'ok' ? '' : chalk.dim(' It now shows in `mindstash scan`.')));
   });
 
 program
