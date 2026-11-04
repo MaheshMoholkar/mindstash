@@ -4,12 +4,32 @@ import type { Item, ScanResult } from '../core/types.js';
 import type { Row } from './data.js';
 import { RULE_LABEL } from './data.js';
 import { CATEGORY_COLOR, CONFIDENCE, theme } from './theme.js';
-import { fmt, wrap, type Line } from './ui.js';
+import { fmt, pill, wrap, type Line, type Seg } from './ui.js';
 
 const blank: Line = { text: '' };
 
-function section(title: string): Line {
-  return { text: title.toUpperCase(), color: theme.muted, bold: true };
+export const KIND_GLYPH: Record<string, { g: string; color: string }> = {
+  memory: { g: '◆', color: theme.accent },
+  skill: { g: '✦', color: theme.info },
+  instructions: { g: '▤', color: theme.accent2 },
+  index: { g: '≣', color: theme.muted },
+  scope: { g: '▸', color: theme.accent },
+  pair: { g: '⇄', color: theme.error },
+};
+
+/** "WHY FLAGGED ──────────" */
+function section(title: string, width: number, color: string = theme.accent2): Line {
+  const t = title.toUpperCase();
+  return { text: t, segs: [{ text: t, color, bold: true }, { text: ' ' + '─'.repeat(Math.max(0, width - t.length - 1)), color: theme.rule }] };
+}
+
+/** "• reason", wrapped with a hanging indent. */
+function bullets(text: string, width: number, mark = '•', color: string = theme.accent): Line[] {
+  return wrap(text, width - 2).map((t, i) => ({ text: t, segs: [{ text: i ? '  ' : `${mark} `, color }, { text: t }] }));
+}
+
+function kv(label: string, value: string, color: string = theme.fg): Line {
+  return { text: `${label} ${value}`, segs: [{ text: label.padEnd(9), color: theme.muted }, { text: value, color }] };
 }
 
 function body(i: Item): string {
@@ -26,16 +46,28 @@ export function editability(i: Item): string {
 }
 
 function itemBlock(i: Item, width: number, maxLines: number): Line[] {
-  const meta = [i.kind, i.scope.label, agentName(i.agent), `~${fmt(i.loadTokens)} tk/session`].join(' · ');
+  const k = KIND_GLYPH[i.kind] ?? KIND_GLYPH.memory!;
   const out: Line[] = [
-    { text: i.name, bold: true, color: theme.fg },
-    { text: meta, dim: true },
+    { text: i.name, segs: [{ text: `${k.g} `, color: k.color }, { text: i.name, bold: true, color: theme.fg }] },
+    {
+      text: '',
+      segs: [
+        pill(i.kind, k.color),
+        { text: ' ' },
+        { text: i.scope.label, color: theme.info },
+        { text: ' · ', color: theme.muted },
+        { text: agentName(i.agent), color: theme.accent2 },
+        { text: ' · ', color: theme.muted },
+        { text: `~${fmt(i.loadTokens)} tk/session`, color: theme.warn },
+        ...(i.readOnly ? [{ text: ' · ', color: theme.muted }, { text: 'read-only', color: theme.error }] : []),
+      ],
+    },
   ];
   if (i.description && i.kind !== 'memory') out.push(...wrap(i.description, width).map((t) => ({ text: t, color: theme.info })));
   const text = wrap(body(i), width - 2);
   for (const t of text.slice(0, maxLines)) out.push({ text: t, gutter: true });
   if (text.length > maxLines) out.push({ text: `… ${text.length - maxLines} more lines`, dim: true });
-  out.push({ text: i.path, dim: true });
+  out.push(kv('file', i.path, theme.muted));
   return out;
 }
 
@@ -50,63 +82,83 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
   if (row.pair) {
     const p = row.pair;
     return [
-      { text: `${p.a.name} ↔ ${p.b.name}`, bold: true, color: CATEGORY_COLOR.contradiction },
-      { text: `May disagree: ${p.cue}`, color: theme.warn },
-      { text: `Shared words: ${p.shared.join(', ')}`, dim: true },
+      { text: '', segs: [{ text: '⇄ ', color: theme.error }, { text: `${p.a.name} ↔ ${p.b.name}`, bold: true, color: CATEGORY_COLOR.contradiction }] },
+      { text: '', segs: [pill('needs check', theme.warn), { text: '  ' }, { text: p.cue, color: theme.warn }] },
+      kv('shared', p.shared.join(', '), theme.info),
       blank,
-      section(`${p.a.name} · ${p.a.scope}`),
+      section(`A · ${p.a.name}`, width, theme.accent),
       ...wrap(p.a.snippet, width - 2).map((t) => ({ text: t, gutter: true })),
-      { text: p.a.path, dim: true },
+      kv('file', p.a.path, theme.muted),
       blank,
-      section(`${p.b.name} · ${p.b.scope}`),
+      section(`B · ${p.b.name}`, width, theme.accent),
       ...wrap(p.b.snippet, width - 2).map((t) => ({ text: t, gutter: true })),
-      { text: p.b.path, dim: true },
+      kv('file', p.b.path, theme.muted),
       blank,
-      { text: 'MindStash only finds candidates. Ask your agent to judge it: /mindstash (Claude Code) or $mindstash (Codex).', dim: true },
-    ].flatMap((l) => (l.gutter || l.text.length <= width ? [l] : wrap(l.text, width).map((t) => ({ ...l, text: t }))));
+      ...bullets('MindStash only finds candidates. Ask your agent to judge it: /mindstash (Claude Code) or $mindstash (Codex).', width, 'ℹ', theme.info),
+    ];
   }
 
   if (row.archived) {
     const a = row.archived;
     return [
-      { text: a.name, bold: true, color: theme.accent },
-      { text: `${a.kind} · ${a.scope} · archived ${a.at.slice(0, 10)}`, dim: false, color: theme.fg },
+      { text: '', segs: [{ text: '↓ ', color: theme.accent2 }, { text: a.name, bold: true, color: theme.accent }] },
+      { text: '', segs: [pill(a.kind, theme.accent2), { text: ' ' }, { text: a.scope, color: theme.info }, { text: ` · archived ${a.at.slice(0, 10)}`, color: theme.muted }] },
       blank,
-      section('Was at'),
-      { text: a.from },
-      section('Kept at'),
-      { text: a.to, dim: true },
+      section('Locations', width),
+      kv('was at', a.from, theme.fg),
+      kv('kept at', a.to, theme.muted),
       blank,
-      { text: 'R restore it · e open the archived copy', color: theme.info },
+      ...bullets('R restore it · e open the archived copy', width, '↑', theme.ok),
     ];
   }
+
   if (row.group) {
     const g = row.group;
-    return [
-      { text: g.label, bold: true, color: theme.accent },
-      { text: [g.memories && `${g.memories} memories`, g.skills && `${g.skills} skills`, `~${fmt(g.tokens)} tk/session`].filter(Boolean).join(' · '), color: theme.fg },
-      ...(g.gone ? [{ text: 'The project folder no longer exists.', color: theme.warn }] : []),
+    const lines: Line[] = [
+      { text: '', segs: [{ text: '▸ ', color: theme.accent }, { text: g.label, bold: true, color: theme.accent }] },
+      {
+        text: '',
+        segs: [
+          ...(g.memories ? [pill(`${g.memories} memories`, theme.accent), { text: ' ' }] : []),
+          ...(g.skills ? [pill(`${g.skills} skills`, theme.info), { text: ' ' }] : []),
+          { text: `~${fmt(g.tokens)} tk/session`, color: theme.warn },
+        ],
+      },
+      ...(g.gone ? bullets('The project folder no longer exists.', width, '!', theme.warn) : []),
       blank,
-      section('Contents'),
-      ...g.items.slice(0, full ? 500 : 12).map((i) => ({ text: `• ${i.name}  (${i.kind})` })),
-      ...(g.items.length > 12 && !full ? [{ text: `… ${g.items.length - 12} more`, dim: true }] : []),
-      blank,
-      { text: 'Enter to open this scope · h to go back', dim: true },
+      section('Contents', width),
     ];
+    for (const i of g.items.slice(0, full ? 500 : 12)) {
+      const k = KIND_GLYPH[i.kind] ?? KIND_GLYPH.memory!;
+      lines.push({ text: i.name, segs: [{ text: `${k.g} `, color: k.color }, { text: i.name }] });
+    }
+    if (g.items.length > 12 && !full) lines.push({ text: `… ${g.items.length - 12} more`, dim: true });
+    lines.push(blank, { text: 'Enter opens this scope · h goes back', dim: true });
+    return lines;
   }
 
   const out: Line[] = [];
   const f = row.finding;
   if (f) {
+    const color = CATEGORY_COLOR[f.category] ?? theme.fg;
     out.push(
-      ...wrap(f.title, width).map((t, i) => ({ text: t, bold: true, color: i === 0 ? CATEGORY_COLOR[f.category] : theme.fg })),
-      { text: `${RULE_LABEL[f.rule] ?? f.rule} · ${f.confidence} confidence · ${f.id}`, color: CONFIDENCE[f.confidence] },
+      ...wrap(f.title, width).map((t) => ({ text: t, bold: true, color })),
+      {
+        text: '',
+        segs: [
+          pill(RULE_LABEL[f.rule] ?? f.rule, color),
+          { text: ' ' },
+          pill(`${f.confidence} confidence`, CONFIDENCE[f.confidence]),
+          { text: '  ' },
+          { text: f.id, color: theme.muted },
+          ...(f.tokens ? [{ text: '  ' }, { text: `~${fmt(f.tokens)} tk/session`, color: theme.warn }] : []),
+        ],
+      },
       blank,
-      section('Why flagged'),
+      section('Why flagged', width),
     );
-    for (const reason of f.reasons) out.push(...wrap(reason, width).map((t) => ({ text: t })));
-    if (f.tokens) out.push({ text: `Costs ~${fmt(f.tokens)} tokens per session.` });
-    if (f.moveTo) out.push({ text: `Move target: ${f.moveTo.label}`, color: theme.info });
+    for (const reason of f.reasons) out.push(...bullets(reason, width));
+    if (f.moveTo) out.push(...bullets(`Move target: ${f.moveTo.label}`, width, '→', theme.info));
     out.push(blank);
   }
 
@@ -114,28 +166,41 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
   if (items.length > 1 && full) {
     // File picker: j/k choose a file, d / a / e act on just that one.
     const at = Math.min(fileCursor, items.length - 1);
-    out.push(section(`${items.length} files · j/k pick · d a e act on the picked one`));
-    items.forEach((i, n) =>
+    out.push(section(`${items.length} files`, width));
+    out.push({ text: '', segs: [{ text: 'j/k pick · d delete · a archive · e edit — acts on the picked file only', color: theme.muted }] });
+    const nw = String(items.length).length;
+    items.forEach((i, n) => {
+      const on = n === at;
+      const k = KIND_GLYPH[i.kind] ?? KIND_GLYPH.memory!;
       out.push({
-        text: `${n === at ? '▌' : ' '} ${i.name}${i.readOnly ? '  (read-only)' : ''}`,
-        color: n === at ? theme.accent : theme.fg,
-        bold: n === at,
-        bg: n === at ? '#292e42' : undefined,
-        cursor: n === at,
-      }),
-    );
-    out.push(blank, section(`Picked file ${at + 1} of ${items.length}`), ...itemBlock(items[at]!, width, 12));
+        text: i.name,
+        cursor: on,
+        bg: on ? theme.hilite : undefined,
+        segs: [
+          { text: on ? '▌' : ' ', color: theme.accent },
+          { text: ` ${String(n + 1).padStart(nw, '0')} `, color: on ? theme.accent : theme.muted },
+          { text: `${k.g} `, color: k.color },
+          { text: i.name, color: on ? theme.fg : theme.fg, bold: on },
+          ...(i.readOnly ? [{ text: '  read-only', color: theme.error }] : []),
+          { text: `  ~${fmt(i.loadTokens)} tk`, color: theme.muted },
+        ] as Seg[],
+      });
+    });
+    out.push(blank, section(`Picked · ${at + 1} of ${items.length}`, width, theme.accent), ...itemBlock(items[at]!, width, 12));
     return out;
   }
   if (items.length > 3) {
-    out.push(section(`${items.length} files`));
-    for (const i of items.slice(0, 6)) out.push({ text: `• ${i.name}`, color: theme.fg });
-    if (items.length > 6) out.push({ text: `… ${items.length - 6} more (Enter to pick one)`, dim: true });
+    out.push(section(`${items.length} files`, width));
+    for (const i of items.slice(0, 6)) {
+      const k = KIND_GLYPH[i.kind] ?? KIND_GLYPH.memory!;
+      out.push({ text: i.name, segs: [{ text: `${k.g} `, color: k.color }, { text: i.name }] });
+    }
+    if (items.length > 6) out.push({ text: `… ${items.length - 6} more · Enter to pick one`, color: theme.info });
     return out;
   }
   items.forEach((i, n) => {
     if (n) out.push(blank);
-    if (f || items.length > 1) out.push(section(items.length > 1 ? `File ${n + 1} of ${items.length}` : 'File'));
+    if (f || items.length > 1) out.push(section(items.length > 1 ? `File ${n + 1} of ${items.length}` : 'File', width));
     out.push(...itemBlock(i, width, per));
   });
   if (row.item && !f) out.push(blank, { text: '✓ Nothing flagged', color: theme.ok });

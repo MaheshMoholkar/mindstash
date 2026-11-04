@@ -688,6 +688,7 @@ export function App(props: AppProps) {
               width={mw}
               height={listH}
               empty={emptyText}
+              grouped={entry?.kind === 'category' && entry.id === 'all' && !query}
             />
           )}
           <Doc

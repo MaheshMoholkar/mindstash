@@ -14,7 +14,7 @@ import type { Finding, ScanResult } from '../core/types.js';
 import { costReport, itemsOf, scanReport, showFinding } from './format.js';
 import { installSkills, skillInstalled } from './skill.js';
 
-const VERSION = '0.3.0';
+const VERSION = '0.3.1';
 
 function findingJson(f: Finding, r: ScanResult, withBody = false) {
   return {
