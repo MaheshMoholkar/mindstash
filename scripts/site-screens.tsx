@@ -304,8 +304,9 @@ async function captureScreens(cols: number, suffix: string) {
     await session({}, async (k, t) => {
       launch = await goTo(k, t, 'launch-checklist');
       shot('main', t, 'launch-checklist');
+      await goTo(k, t, 'label-poc');
       await press(k, 'l');
-      shot('detail', t, 'which ended');
+      shot('detail', t, 'label-poc-deploy  d delete');
     });
     await session({ firstRun: true, cursor: launch }, async (k, t) => {
       shot('welcome', t);
