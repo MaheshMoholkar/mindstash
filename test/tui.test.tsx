@@ -113,11 +113,16 @@ describe('full-screen UI', () => {
     const { press, frame } = await app({ firstRun: true });
     expect(frame()).toContain('Welcome to MindStash');
     await press(KEY.enter);
-    expect(frame()).toContain('Tour 1/3');
-    await press(KEY.enter);
-    expect(frame()).toContain('Tour 2/3');
-    await press(KEY.enter);
-    expect(frame()).toContain('Tour 3/3');
+    expect(frame()).toContain('Quick Tour 1/3');
+    expect(frame()).toContain('TOUR');
+    expect(frame()).toContain('Enter / → / ↓ next');
+    expect(frame()).not.toContain('NORMAL');
+    await press('\u001b[B'); // Down
+    expect(frame()).toContain('Quick Tour 2/3');
+    await press('\u001b[A'); // Up
+    expect(frame()).toContain('Quick Tour 1/3');
+    await press('\u001b[C', KEY.enter); // Right, then Enter
+    expect(frame()).toContain('Quick Tour 3/3');
     await press(KEY.enter);
     expect(frame()).toContain('Use MindStash from your agent?');
     await press('y');

@@ -14,6 +14,7 @@ export function Modal({
   cols,
   rows,
   color = theme.accent,
+  backgroundColor,
 }: {
   title: string;
   lines: Line[];
@@ -22,6 +23,7 @@ export function Modal({
   cols: number;
   rows: number;
   color?: string;
+  backgroundColor?: string;
 }) {
   const w = Math.min(width, cols - 4);
   const inner = w - 4;
@@ -33,22 +35,22 @@ export function Modal({
   return (
     <Box position="absolute" top={top} left={left} flexDirection="column" width={w}>
       <Text>
-        <Text color={color}>╭─</Text>
-        <Text color={color} bold>
+        <Text color={color} backgroundColor={backgroundColor}>╭─</Text>
+        <Text color={color} backgroundColor={backgroundColor} bold>
           {t}
         </Text>
-        <Text color={color}>{'─'.repeat(Math.max(0, w - 4 - t.length))}─╮</Text>
+        <Text color={color} backgroundColor={backgroundColor}>{'─'.repeat(Math.max(0, w - 4 - t.length))}─╮</Text>
       </Text>
       {body.map((l, i) => (
         <Text key={i}>
-          <Text color={color}>│ </Text>
-          <Text color={l.color ?? (l.dim ? theme.muted : theme.fg)} bold={l.bold} backgroundColor={(l as Hl).bg}>
+          <Text color={color} backgroundColor={backgroundColor}>│ </Text>
+          <Text color={l.color ?? (l.dim ? theme.muted : theme.fg)} bold={l.bold} backgroundColor={(l as Hl).bg ?? backgroundColor}>
             {fit(l.text, inner)}
           </Text>
-          <Text color={color}> │</Text>
+          <Text color={color} backgroundColor={backgroundColor}> │</Text>
         </Text>
       ))}
-      <Text color={color}>╰{'─'.repeat(w - 2)}╯</Text>
+      <Text color={color} backgroundColor={backgroundColor}>╰{'─'.repeat(w - 2)}╯</Text>
     </Box>
   );
 }

@@ -559,10 +559,10 @@ export function App(props: AppProps) {
           return;
         case 'tour':
           if (key.escape) finishTour(overlay.onboarding);
-          else if (key.return || key.rightArrow) {
+          else if (key.return || key.rightArrow || key.downArrow) {
             if (overlay.page === TOUR.length - 1) finishTour(overlay.onboarding);
             else setOverlay({ ...overlay, page: overlay.page + 1 });
-          } else if (key.leftArrow && overlay.page > 0) setOverlay({ ...overlay, page: overlay.page - 1 });
+          } else if ((key.leftArrow || key.upArrow) && overlay.page > 0) setOverlay({ ...overlay, page: overlay.page - 1 });
           return;
         case 'skill':
           if (input === 'y') {
@@ -738,7 +738,13 @@ export function App(props: AppProps) {
           ? '✓ Nothing needs attention here.'
           : 'Empty.';
 
-  const statusMode: Mode = overlay && (overlay.kind === 'confirm' || overlay.kind === 'undo') ? 'CONFIRM' : mode;
+  const tourPage = overlay?.kind === 'tour' ? overlay.page : undefined;
+  const tourKeys = tourPage === TOUR.length - 1
+    ? 'Enter / → / ↓ done · ← / ↑ back · Esc close'
+    : 'Enter / → / ↓ next · ← / ↑ back · Esc skip';
+  const statusMode: Mode = tourPage !== undefined
+    ? 'TOUR'
+    : overlay?.kind === 'confirm' || overlay?.kind === 'undo' ? 'CONFIRM' : mode;
   const crumb = [entryLabel, rows.length && !isCost ? `${cur + 1}/${rows.length}` : '', focus === 'detail' ? 'detail' : '', refreshing ? '↻ refreshing' : '']
     .filter(Boolean)
     .join(' › ');
@@ -844,9 +850,11 @@ export function App(props: AppProps) {
       );
     } else if (overlay.kind === 'tour') {
       const tip = TOUR[overlay.page]!;
-      modal = <Modal {...common} title={`Tour ${overlay.page + 1}/${TOUR.length} · ${tip.title}`}
+      modal = <Modal {...common} title={`Quick Tour ${overlay.page + 1}/${TOUR.length} · ${tip.title}`}
+        color={theme.accent2}
+        backgroundColor={theme.hilite}
         lines={wrap(tip.text, inner).map((text) => ({ text }))}
-        footer={overlay.page === TOUR.length - 1 ? '⏎ done   ← back   Esc close' : '⏎ next   ← back   Esc skip'} />;
+        footer={tourKeys} />;
     } else if (overlay.kind === 'skill') {
       const agents = result.agents.filter((a) => a.found).map((a) => agentName(a.id));
       modal = (
@@ -907,13 +915,13 @@ export function App(props: AppProps) {
           />
         </Box>
       </Box>
-      <StatusLine mode={statusMode} crumb={crumb} selected={selected.size} tokens={tokens} width={cols} />
+      <StatusLine mode={statusMode} crumb={tourPage === undefined ? crumb : `Quick tour ${tourPage + 1}/${TOUR.length}`} selected={selected.size} tokens={tokens} width={cols} />
       <CommandLine
         mode={mode}
         input={mode === 'COMMAND' ? cmd : query}
         completion={completion}
-        message={message}
-        hints={hints}
+        message={tourPage === undefined ? message : undefined}
+        hints={tourPage === undefined ? hints : tourKeys}
         width={cols}
       />
       {modal}

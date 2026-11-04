@@ -248,7 +248,7 @@ export function StatusLine({
   const pill = ` ${mode} `;
   const sel = selected ? ` ◆ ${selected} selected ` : '';
   const tk = ` ${tokens.map((t) => `${t.name} ${short(t.tokens)}`).join(' · ')} tk/session `;
-  const help = ' ? help  : cmd  ^p palette ';
+  const help = mode === 'TOUR' ? ' Esc exit tour ' : ' ? help  : cmd  ^p palette ';
   const room = width - pill.length - sel.length - tk.length - help.length;
   return (
     <Text>

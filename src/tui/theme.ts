@@ -97,4 +97,5 @@ export const MODE_COLOR = {
   get SEARCH() { return theme.warn; },
   get COMMAND() { return theme.accent2; },
   get CONFIRM() { return theme.error; },
+  get TOUR() { return theme.accent2; },
 } as const;
