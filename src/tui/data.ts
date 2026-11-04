@@ -1,6 +1,6 @@
 import { agentName } from '../adapters/index.js';
 import { CATEGORIES, itemsOf, subject } from '../cli/format.js';
-import type { Pair } from '../core/state.js';
+import type { Archived, Pair } from '../core/state.js';
 import type { Category, Finding, Item, ScanResult } from '../core/types.js';
 import { CATEGORY_COLOR } from './theme.js';
 import { plural } from '../core/text.js';
@@ -10,7 +10,7 @@ export type Entry =
   | { kind: 'header'; key: string; label: string }
   | { kind: 'category'; key: string; id: Category | 'all'; label: string; count: number; color: string }
   | { kind: 'scope'; key: string; group: Group }
-  | { kind: 'view'; key: string; id: 'cost' | 'checks' | 'browse'; label: string; badge?: number }
+  | { kind: 'view'; key: string; id: 'cost' | 'checks' | 'browse' | 'archived'; label: string; badge?: number }
   | { kind: 'gap'; key: string };
 
 export interface Group {
@@ -35,6 +35,7 @@ export interface Row {
   item?: Item;
   pair?: Pair;
   group?: Group;
+  archived?: Archived;
 }
 
 export const RULE_LABEL: Record<string, string> = {
@@ -52,6 +53,11 @@ export const RULE_LABEL: Record<string, string> = {
   contradiction: 'contradiction',
   'duplicate-checked': 'duplicate',
   'agents-too-long': 'AGENTS.md too long',
+  'missing-skill': 'missing skill',
+  'version-mismatch': 'version mismatch',
+  'broad-instructions': 'loads everywhere',
+  'codex-skill-budget': 'skills budget',
+  'instructions-too-big': 'too big',
 };
 
 export function groupsOf(r: ScanResult): Group[] {
@@ -94,7 +100,7 @@ export function groupsOf(r: ScanResult): Group[] {
   return groups;
 }
 
-export function sidebarEntries(r: ScanResult, pairs: Pair[]): Entry[] {
+export function sidebarEntries(r: ScanResult, pairs: Pair[], archived: Archived[] = []): Entry[] {
   const out: Entry[] = [{ kind: 'header', key: 'h:findings', label: 'FINDINGS' }];
   out.push({ kind: 'category', key: 'cat:all', id: 'all', label: 'All', count: r.findings.length, color: CATEGORY_COLOR.all! });
   for (const c of CATEGORIES) {
@@ -104,6 +110,7 @@ export function sidebarEntries(r: ScanResult, pairs: Pair[]): Entry[] {
   out.push({ kind: 'gap', key: 'g:1' }, { kind: 'header', key: 'h:views', label: 'VIEWS' });
   out.push({ kind: 'view', key: 'view:browse', id: 'browse', label: 'Browse all', badge: groupsOf(r).length });
   out.push({ kind: 'view', key: 'view:checks', id: 'checks', label: 'Checks', badge: pairs.length || undefined });
+  out.push({ kind: 'view', key: 'view:archived', id: 'archived', label: 'Archived', badge: archived.length || undefined });
   out.push({ kind: 'view', key: 'view:cost', id: 'cost', label: 'Token cost' });
   return out;
 }
@@ -121,7 +128,7 @@ function flagMap(r: ScanResult): Map<string, Finding> {
   return m;
 }
 
-export function rowsFor(entry: Entry | undefined, r: ScanResult, pairs: Pair[], query: string): Row[] {
+export function rowsFor(entry: Entry | undefined, r: ScanResult, pairs: Pair[], query: string, archived: Archived[] = []): Row[] {
   if (!entry) return [];
   const q = query.toLowerCase();
   const match = (...parts: (string | undefined)[]) => !q || parts.join(' ').toLowerCase().includes(q);
@@ -170,6 +177,12 @@ export function rowsFor(entry: Entry | undefined, r: ScanResult, pairs: Pair[], 
       }))
       .filter((row) => match(row.primary, row.secondary));
   }
+  if (entry.kind === 'view' && entry.id === 'archived') {
+    return [...archived]
+      .reverse()
+      .map((a): Row => ({ key: a.id, primary: a.name, secondary: a.scope, tag: a.kind, color: '', archived: a }))
+      .filter((row) => match(row.primary, row.secondary));
+  }
   if (entry.kind === 'view' && entry.id === 'checks') {
     return pairs
       .map(
@@ -191,6 +204,7 @@ export function rowsFor(entry: Entry | undefined, r: ScanResult, pairs: Pair[], 
 export function pathsOf(row: Row | undefined, r: ScanResult): string[] {
   if (!row) return [];
   if (row.pair) return [...new Set([row.pair.a.path, row.pair.b.path])];
+  if (row.archived) return [row.archived.kind === 'skill' ? `${row.archived.to}/SKILL.md` : row.archived.to];
   if (row.item) return [row.item.path];
   if (row.finding) return [...new Set(itemsOf(row.finding, r).map((i) => i.path))];
   return [];

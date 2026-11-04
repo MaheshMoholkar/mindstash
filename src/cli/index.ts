@@ -1,19 +1,20 @@
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import chalk from 'chalk';
 import { defaultContext, scan } from '../core/scan.js';
 import { apply, describe, FixError, plan, undo, type Requests } from '../core/fix.js';
 import { cost } from '../core/cost.js';
 import { loadState, saveState } from '../core/state.js';
 import { pending } from '../core/contradictions.js';
+import { installHook, installStatusLine, markSeen, refreshInBackground, sessionNote, statusText } from '../core/notify.js';
 import { clip, tildify } from '../core/text.js';
 import type { Finding, ScanResult } from '../core/types.js';
 import { costReport, itemsOf, scanReport, showFinding } from './format.js';
 import { installSkills, skillInstalled } from './skill.js';
 
-const VERSION = '0.2.2';
+const VERSION = '0.3.0';
 
 function findingJson(f: Finding, r: ScanResult, withBody = false) {
   return {
@@ -84,12 +85,16 @@ function scanCommand(cmd: Command) {
   return cmd
     .option('--json', 'machine-readable output')
     .option('--full', 'list every finding')
-    .option('--include-ignored', 'include findings marked "not a problem"');
+    .option('--include-ignored', 'include findings marked "not a problem"')
+    .addOption(new Option('--background').hideHelp());
 }
 
-async function runScan(opts: { json?: boolean; full?: boolean; includeIgnored?: boolean }) {
+async function runScan(opts: { json?: boolean; full?: boolean; includeIgnored?: boolean; background?: boolean }) {
   const ctx = defaultContext();
   const r = await scan(ctx, { includeIgnored: opts.includeIgnored });
+  // A background refresh (status line / hook) isn't the user looking.
+  if (!opts.background) markSeen(ctx, r.findings.map((f) => f.id));
+  if (opts.background) return;
   if (opts.json) {
     console.log(
       JSON.stringify(
@@ -140,10 +145,17 @@ program
   .option('--archive <ids...>', 'hide from the agent, keep a copy in ~/.mindstash/archive')
   .option('--move <ids...>', 'move to the suggested project')
   .option('--ignore <ids...>', 'mark as "not a problem"')
+  .option('--relink <ids...>', 'add an unlisted memory back into MEMORY.md')
   .option('-y, --yes', 'apply without asking')
-  .action(async (opts: { delete?: string[]; archive?: string[]; move?: string[]; ignore?: string[]; yes?: boolean }) => {
+  .action(async (opts: { delete?: string[]; archive?: string[]; move?: string[]; ignore?: string[]; relink?: string[]; yes?: boolean }) => {
     const ctx = defaultContext();
-    const req: Requests = { delete: ids(opts.delete), archive: ids(opts.archive), move: ids(opts.move), ignore: ids(opts.ignore) };
+    const req: Requests = {
+      delete: ids(opts.delete),
+      archive: ids(opts.archive),
+      move: ids(opts.move),
+      ignore: ids(opts.ignore),
+      relink: ids(opts.relink),
+    };
     if (!Object.values(req).some((v) => v?.length)) {
       console.error('Nothing to apply. Example: mindstash apply --delete a1b2c3 --ignore d4e5f6');
       process.exitCode = 1;
@@ -179,6 +191,103 @@ program
         return;
       }
       throw e;
+    }
+  });
+
+program
+  .command('archived')
+  .description('list what MindStash archived (restore with `mindstash restore <id>`)')
+  .option('--json', 'machine-readable output')
+  .action((opts: { json?: boolean }) => {
+    const ctx = defaultContext();
+    const list = loadState(ctx.mindstashDir).archived;
+    if (opts.json) return console.log(JSON.stringify(list, null, 2));
+    if (!list.length) return console.log(' Nothing archived.');
+    for (const a of list) {
+      console.log(`   ${chalk.cyan(a.id)}  ${chalk.bold(a.name)}  ${chalk.dim(`${a.kind} · ${a.scope} · ${a.at.slice(0, 10)}`)}`);
+    }
+  });
+
+program
+  .command('restore <ids...>')
+  .description('put archived items back where they were')
+  .option('-y, --yes', 'restore without asking')
+  .action(async (list: string[], opts: { yes?: boolean }) => {
+    const ctx = defaultContext();
+    try {
+      const p = plan(ctx, { restore: ids(list) });
+      for (const a of p.actions) console.log('   ' + describe(a));
+      if (!opts.yes) {
+        if (!process.stdin.isTTY) {
+          console.error('Not restored: re-run with --yes to confirm.');
+          process.exitCode = 2;
+          return;
+        }
+        if (!(await confirm(' [y] Restore  [n] Cancel  '))) return;
+      }
+      apply(ctx, p);
+      console.log(chalk.green(` ✓ Restored ${p.actions.length}.`) + chalk.dim(' · undo: mindstash undo'));
+    } catch (e) {
+      if (e instanceof FixError) {
+        console.error(e.message);
+        process.exitCode = 1;
+        return;
+      }
+      throw e;
+    }
+  });
+
+program
+  .command('statusline')
+  .description('one-line status for Claude Code (reads the cached scan; never slow)')
+  .action(() => {
+    const ctx = defaultContext();
+    try {
+      console.log(statusText(loadState(ctx.mindstashDir)));
+      refreshInBackground(ctx, process.argv[1]);
+    } catch {
+      console.log('🧠 mindstash');
+    }
+  });
+
+program
+  .command('hook <event>')
+  .description('hook entry point (session-start): tells you about new findings once')
+  .action((event: string) => {
+    const ctx = defaultContext();
+    if (event !== 'session-start') return;
+    try {
+      const note = sessionNote(ctx);
+      if (note) console.log(JSON.stringify({ systemMessage: note }));
+      refreshInBackground(ctx, process.argv[1]);
+    } catch {
+      /* a hook must never break the session */
+    }
+  });
+
+program
+  .command('install-statusline')
+  .description('show MindStash in the Claude Code status line (opt-in)')
+  .option('--remove', 'take it out again')
+  .action((opts: { remove?: boolean }) => {
+    try {
+      console.log(' ' + installStatusLine(defaultContext(), selfCommand(), opts.remove));
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command('install-hook')
+  .description('tell you about new findings when a Claude Code session starts (opt-in)')
+  .option('--remove', 'take it out again')
+  .action((opts: { remove?: boolean }) => {
+    try {
+      console.log(' ' + installHook(defaultContext(), selfCommand(), opts.remove));
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exitCode = 1;
     }
   });
 

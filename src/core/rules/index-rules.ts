@@ -78,7 +78,7 @@ export const unindexed: Rule = ({ items }) => {
       ],
       itemIds: [m.id],
       tokens: 0,
-      fixes: ['delete', 'archive', 'ignore'],
+      fixes: ['relink', 'delete', 'archive', 'ignore'],
     });
   }
   return out;

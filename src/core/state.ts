@@ -32,6 +32,20 @@ const StoredFinding = z.object({
 
 const Touched = z.object({ path: z.string(), existed: z.boolean() });
 
+/** Something archived by MindStash, and where it came from, so it can be restored. */
+const Archived = z.object({
+  id: z.string(),
+  kind: z.enum(['memory', 'skill']),
+  agent: z.string(),
+  name: z.string(),
+  scope: z.string(),
+  from: z.string(),
+  to: z.string(),
+  indexPath: z.string().optional(),
+  indexLine: z.string().optional(),
+  at: z.string(),
+});
+
 const Operation = z.object({
   id: z.string(),
   at: z.string(),
@@ -40,6 +54,8 @@ const Operation = z.object({
   touched: z.array(Touched),
   ignored: z.array(z.string()),
   deletedAdded: z.array(z.string()),
+  archivedAdded: z.array(z.string()).default([]),
+  archivedRemoved: z.array(Archived).default([]),
   undone: z.boolean().default(false),
 });
 
@@ -89,6 +105,11 @@ const StateSchema = z.object({
   history: z.array(Operation),
   lastCheck: z.object({ at: z.string(), pairs: z.array(Pair) }).optional(),
   verdicts: z.record(z.string(), Verdict).default({}),
+  archived: z.array(Archived).default([]),
+  /** Finding ids the user has seen in an interactive view (for "N new" in the status line). */
+  seen: z.array(z.string()).default([]),
+  /** Finding ids already announced by the session-start hook. */
+  notified: z.array(z.string()).default([]),
 });
 
 export type State = z.infer<typeof StateSchema>;
@@ -96,11 +117,12 @@ export type StoredFinding = z.infer<typeof StoredFinding>;
 export type StoredTarget = z.infer<typeof Target>;
 export type Operation = z.infer<typeof Operation>;
 export type Pair = z.infer<typeof Pair>;
+export type Archived = z.infer<typeof Archived>;
 export type PairSide = z.infer<typeof Side>;
 export type Verdict = z.infer<typeof Verdict>;
 
 export function emptyState(): State {
-  return { version: 1, ignored: {}, deleted: [], history: [], verdicts: {} };
+  return { version: 1, ignored: {}, deleted: [], history: [], verdicts: {}, archived: [], seen: [], notified: [] };
 }
 
 export function statePath(mindstashDir: string): string {

@@ -9,11 +9,15 @@ import { agentsTooLong, brokenLink, tooLong, unindexed } from './rules/index-rul
 import { wrongScope } from './rules/scope.js';
 import { relearned, similarMemories, skillOverlap } from './rules/similar.js';
 import { judged, pending } from './contradictions.js';
+import { broadInstructions, codexSkillBudget, instructionsTooBig, missingSkill, versionMismatch } from './rules/more.js';
 
 export const RULES = [
   missingProject,
   missingPath,
+  missingSkill,
+  versionMismatch,
   pastEvent,
+  broadInstructions,
   wrongScope,
   similarMemories,
   skillOverlap,
@@ -23,6 +27,8 @@ export const RULES = [
   brokenLink,
   unindexed,
   agentsTooLong,
+  codexSkillBudget,
+  instructionsTooBig,
 ];
 
 /** Codex memory files are generated; MindStash points at how to change them instead. */

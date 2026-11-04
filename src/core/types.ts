@@ -62,7 +62,7 @@ export type Confidence = 'high' | 'medium' | 'low';
 
 export type Category = 'stale' | 'scope' | 'similar' | 'contradiction' | 'relearned' | 'index';
 
-export type FixKind = 'delete' | 'archive' | 'move' | 'ignore';
+export type FixKind = 'delete' | 'archive' | 'move' | 'ignore' | 'relink' | 'restore';
 
 /** Where a "move" fix sends a memory. */
 export interface MoveTarget {

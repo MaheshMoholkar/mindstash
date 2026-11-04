@@ -2,7 +2,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync
 import { basename, dirname, join, relative } from 'node:path';
 import { Backup } from './backup.js';
 import { signature } from './minhash.js';
-import { loadState, saveState, type Operation, type StoredFinding, type StoredTarget } from './state.js';
+import { loadState, saveState, type Archived, type Operation, type StoredFinding, type StoredTarget } from './state.js';
 import { contentHash, parseFrontmatter, shortHash } from './text.js';
 import type { FixKind, ScanContext } from './types.js';
 
@@ -14,6 +14,8 @@ export type Action =
   | { kind: 'move'; findingId: string; target: StoredTarget; dest: string; destIndex: string; label: string }
   | { kind: 'unlink'; findingId: string; indexPath: string; file: string }
   | { kind: 'delete-skill'; findingId: string; target: StoredTarget; dir: string; files: string[] }
+  | { kind: 'relink'; findingId: string; target: StoredTarget; indexPath: string; line: string }
+  | { kind: 'restore'; findingId: string; entry: Archived; files: { from: string; to: string }[] }
   | { kind: 'archive-skill'; findingId: string; target: StoredTarget; dir: string; files: string[]; dest: string }
   | { kind: 'ignore'; findingId: string; finding: StoredFinding };
 
@@ -108,7 +110,20 @@ export function plan(ctx: ScanContext, requests: Requests): Plan {
     }
   };
 
-  for (const kind of ['delete', 'archive', 'move', 'ignore'] as const) {
+  // Restore: ids come from the archive list, not the scan.
+  for (const id of requests.restore ?? []) {
+    const entry = state.archived.find((a) => a.id === id);
+    if (!entry) throw new FixError(`Unknown archived id "${id}". See \`mindstash archived\`.`);
+    if (!existsSync(entry.to)) throw new FixError(`${id}: the archived copy at ${entry.to} is gone.`);
+    if (existsSync(entry.from)) throw new FixError(`${id}: ${entry.from} exists again; move or remove it first.`);
+    const files =
+      entry.kind === 'skill'
+        ? filesUnder(entry.to).map((f) => ({ from: f, to: join(entry.from, relative(entry.to, f)) }))
+        : [{ from: entry.to, to: entry.from }];
+    actions.push({ kind: 'restore', findingId: id, entry, files });
+  }
+
+  for (const kind of ['delete', 'archive', 'move', 'ignore', 'relink'] as const) {
     for (const id of requests[kind] ?? []) {
       const f = byId.get(id);
       const item = f ? undefined : itemsById.get(id);
@@ -123,6 +138,16 @@ export function plan(ctx: ScanContext, requests: Requests): Plan {
       }
       if (kind === 'ignore') {
         actions.push({ kind, findingId: id, finding: f });
+        continue;
+      }
+      if (kind === 'relink') {
+        const t = f.targets[0]!;
+        checkUnchanged(id, t);
+        if (!t.indexPath) throw new FixError(`${id}: no MEMORY.md to link from.`);
+        const { data } = parseFrontmatter(readFileSync(t.path, 'utf8'));
+        const desc = typeof data.description === 'string' ? data.description.replace(/\s+/g, ' ').trim() : '';
+        const line = `- [${t.name}](${basename(t.path)})${desc ? ` — ${desc}` : ''}`;
+        actions.push({ kind, findingId: id, target: t, indexPath: t.indexPath, line });
         continue;
       }
       if (f.rule === 'broken-link') {
@@ -169,6 +194,10 @@ export function describe(a: Action): string {
       return `✕ delete   skill ${a.target.name}   ${a.target.scope} (${a.files.length} file${a.files.length === 1 ? '' : 's'})`;
     case 'archive-skill':
       return `↓ archive  skill ${a.target.name}   ${a.target.scope}`;
+    case 'relink':
+      return `+ link     ${a.target.name} into MEMORY.md   ${a.target.scope}`;
+    case 'restore':
+      return `↑ restore  ${a.entry.kind === 'skill' ? 'skill ' : ''}${a.entry.name}   ${a.entry.scope}`;
   }
 }
 
@@ -180,6 +209,15 @@ export function apply(ctx: ScanContext, p: Plan): Operation {
     if (a.kind === 'ignore') continue;
     if (a.kind === 'unlink') {
       touched.push(a.indexPath);
+      continue;
+    }
+    if (a.kind === 'relink') {
+      touched.push(a.indexPath);
+      continue;
+    }
+    if (a.kind === 'restore') {
+      for (const f of a.files) touched.push(f.from, f.to);
+      if (a.entry.indexPath) touched.push(a.entry.indexPath);
       continue;
     }
     if (a.kind === 'delete-skill' || a.kind === 'archive-skill') {
@@ -199,6 +237,19 @@ export function apply(ctx: ScanContext, p: Plan): Operation {
 
   const ignored: string[] = [];
   const deletedAdded: string[] = [];
+  const archivedAdded: string[] = [];
+  const archivedRemoved: Archived[] = [];
+  const remember = (e: Omit<Archived, 'id' | 'at'>) => {
+    const entry = { ...e, id: shortHash(e.to + at, 8), at };
+    state.archived.push(entry);
+    archivedAdded.push(entry.id);
+  };
+  const appendLine = (indexPath: string, line: string) => {
+    const existing = existsSync(indexPath) ? readFileSync(indexPath, 'utf8') : '';
+    const sep = existing === '' || existing.endsWith('\n') ? '' : '\n';
+    mkdirSync(dirname(indexPath), { recursive: true });
+    writeFileSync(indexPath, existing + sep + line + '\n');
+  };
   const at = ctx.now.toISOString();
 
   for (const a of p.actions) {
@@ -218,7 +269,22 @@ export function apply(ctx: ScanContext, p: Plan): Operation {
       case 'archive-skill':
         mkdirSync(dirname(a.dest), { recursive: true });
         renameSync(a.dir, a.dest);
+        remember({ kind: 'skill', agent: a.target.agent ?? 'claude-code', name: a.target.name, scope: a.target.scope, from: a.dir, to: a.dest });
         break;
+      case 'relink':
+        appendLine(a.indexPath, a.line);
+        break;
+      case 'restore': {
+        for (const f of a.files) {
+          mkdirSync(dirname(f.to), { recursive: true });
+          renameSync(f.from, f.to);
+        }
+        if (a.entry.kind === 'skill') rmSync(a.entry.to, { recursive: true, force: true });
+        if (a.entry.indexPath && a.entry.indexLine) appendLine(a.entry.indexPath, a.entry.indexLine);
+        state.archived = state.archived.filter((x) => x.id !== a.entry.id);
+        archivedRemoved.push(a.entry);
+        break;
+      }
       case 'delete': {
         // Keep a text-free fingerprint so a re-learned copy can be spotted later.
         const { body, data } = parseFrontmatter(readFileSync(a.target.path, 'utf8'));
@@ -235,11 +301,22 @@ export function apply(ctx: ScanContext, p: Plan): Operation {
         if (a.target.indexPath) removeIndexLine(a.target.indexPath, basename(a.target.path));
         break;
       }
-      case 'archive':
+      case 'archive': {
         mkdirSync(dirname(a.dest), { recursive: true });
         renameSync(a.target.path, a.dest);
-        if (a.target.indexPath) removeIndexLine(a.target.indexPath, basename(a.target.path));
+        const lines = a.target.indexPath ? removeIndexLine(a.target.indexPath, basename(a.target.path)) : [];
+        remember({
+          kind: 'memory',
+          agent: a.target.agent ?? 'claude-code',
+          name: a.target.name,
+          scope: a.target.scope,
+          from: a.target.path,
+          to: a.dest,
+          indexPath: a.target.indexPath,
+          indexLine: lines[0],
+        });
         break;
+      }
       case 'move': {
         const file = basename(a.target.path);
         const lines = a.target.indexPath ? removeIndexLine(a.target.indexPath, file) : [];
@@ -262,6 +339,8 @@ export function apply(ctx: ScanContext, p: Plan): Operation {
     touched: snap,
     ignored,
     deletedAdded,
+    archivedAdded,
+    archivedRemoved,
     undone: false,
   };
   state.history.push(op);
@@ -278,6 +357,7 @@ export function undo(ctx: ScanContext): Operation | undefined {
   backup.restore(op.commit, op.touched);
   for (const id of op.ignored) delete state.ignored[id];
   state.deleted = state.deleted.filter((d) => !op.deletedAdded.includes(d.key));
+  state.archived = [...state.archived.filter((a) => !op.archivedAdded.includes(a.id)), ...op.archivedRemoved];
   op.undone = true;
   backup.note(`undo ${op.commit.slice(0, 8)}`);
   saveState(ctx.mindstashDir, state);

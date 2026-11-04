@@ -8,7 +8,7 @@ import { findingId, memoryFixes, sumLoad, type Rule } from './context.js';
 /* ------------------------------------------------------------------ */
 /* Missing project: the memory belongs to a folder that no longer exists. */
 
-export const missingProject: Rule = ({ projects, items }) => {
+export const missingProject: Rule = ({ ctx, projects, items }) => {
   const out: Finding[] = [];
   for (const p of projects) {
     if (p.exists) continue;
@@ -21,7 +21,7 @@ export const missingProject: Rule = ({ projects, items }) => {
       confidence: 'high',
       title: `${plural(mems.length, 'memory', 'memories')} for a project folder that no longer exists`,
       reasons: [
-        `The project folder ${p.path} was not found on disk (moved, renamed or deleted).`,
+        `The project folder ${tildify(p.path, ctx.home)} was not found on disk (moved, renamed or deleted).`,
         `These memories only apply to sessions started in that folder.`,
       ],
       itemIds: mems.map((m) => m.id),

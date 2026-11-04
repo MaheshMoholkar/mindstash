@@ -8,6 +8,7 @@ import { baselines, cost } from '../core/cost.js';
 import { apply, describe, FixError, plan, undo, type Requests } from '../core/fix.js';
 import { actionable, scan } from '../core/scan.js';
 import { loadState, type Pair } from '../core/state.js';
+import { markSeen } from '../core/notify.js';
 import { plural } from '../core/text.js';
 import type { FixKind, ScanContext, ScanResult } from '../core/types.js';
 import { pathsOf, rowsFor, scopeEntries, selectable, sidebarEntries, type Entry, type Row } from './data.js';
@@ -76,6 +77,11 @@ export function App(props: AppProps) {
     return r;
   }, [ctx]);
 
+  // Opening the UI counts as having looked (the status line's "N new" resets).
+  useEffect(() => {
+    if (result) markSeen(ctx, result.findings.map((f) => f.id));
+  }, [result]);
+
   useEffect(() => {
     if (props.initialResult) return;
     // Let the first frame paint before the (synchronous) scan blocks.
@@ -85,7 +91,14 @@ export function App(props: AppProps) {
 
   /* ---------------------------------------------------------------- derived */
 
-  const entries = useMemo(() => (result ? sidebarEntries(result, pairs) : []), [result, pairs]);
+  const archived = useMemo(() => {
+    try {
+      return loadState(ctx.mindstashDir).archived;
+    } catch {
+      return [];
+    }
+  }, [result]);
+  const entries = useMemo(() => (result ? sidebarEntries(result, pairs, archived) : []), [result, pairs, archived]);
   const scopes = useMemo(() => (result ? scopeEntries(result) : []), [result]);
   const scopeEntry = scopes.find((e) => e.key === entryKey);
   // An open scope highlights "Browse all" in the sidebar.
@@ -93,7 +106,7 @@ export function App(props: AppProps) {
   const found = entries.findIndex((e) => e.key === sideKey && selectable(e));
   const entryIdx = found >= 0 ? found : entries.findIndex(selectable);
   const entry: Entry | undefined = scopeEntry ?? entries[entryIdx];
-  const rows = useMemo(() => (result ? rowsFor(entry, result, pairs, query) : []), [entry, result, pairs, query]);
+  const rows = useMemo(() => (result ? rowsFor(entry, result, pairs, query, archived) : []), [entry, result, pairs, query, archived]);
   const cur = clamp(cursor, 0, Math.max(0, rows.length - 1));
   const row: Row | undefined = rows[cur];
   const isCost = entry?.kind === 'view' && entry.id === 'cost';
@@ -212,6 +225,18 @@ export function App(props: AppProps) {
     }
     const rs = targets();
     if (!rs.length) return setMessage({ tone: 'info', text: 'Pick a row first (l to move into the list).' });
+    if (kind === 'restore') {
+      const restoreIds = rs.filter((r) => r.archived).map((r) => r.key);
+      if (!restoreIds.length) return setMessage({ tone: 'info', text: 'R restores items in the Archived view.' });
+      try {
+        const p = plan(ctx, { restore: restoreIds });
+        if (p.actions.length) setOverlay({ kind: 'confirm', plan: p });
+      } catch (e) {
+        if (e instanceof FixError) setMessage({ tone: 'error', text: e.message });
+        else throw e;
+      }
+      return;
+    }
     const ids: string[] = [];
     let why = '';
     for (const r of rs) {
@@ -285,6 +310,9 @@ export function App(props: AppProps) {
     { name: 'archive', aliases: ['a'], title: 'Archive the selected rows', run: () => act('archive') },
     { name: 'move', aliases: ['m'], title: 'Move to the suggested project', run: () => act('move') },
     { name: 'ignore', aliases: ['i'], title: 'Mark as not a problem', run: () => act('ignore') },
+    { name: 'link', aliases: ['relink'], title: 'Add an unlisted memory to MEMORY.md', run: () => act('relink') },
+    { name: 'restore', title: 'Restore archived items', run: () => act('restore') },
+    { name: 'archived', title: 'Archived items', run: () => goEntry('view:archived') },
     { name: 'edit', aliases: ['e'], title: 'Open in $EDITOR', run: edit },
     { name: 'skill', aliases: ['install-skill'], title: 'Install the MindStash skill', run: installSkill },
     { name: 'sidebar', title: 'Hide / show the sidebar', run: () => setSidebarHidden((h) => !h) },
@@ -491,6 +519,8 @@ export function App(props: AppProps) {
     else if (input === 'a') act('archive');
     else if (input === 'm') act('move');
     else if (input === 'i') act('ignore');
+    else if (input === 'L') act('relink');
+    else if (input === 'R') act('restore');
     else if (input === 'e') edit();
     else if (input === 'u') askUndo();
     else if (input === '/') {
@@ -538,7 +568,11 @@ export function App(props: AppProps) {
         ? picking
           ? 'j/k pick file · d delete it · a archive it · e edit it · i ignore finding · h back (d in list = all files)'
           : 'j/k scroll · d delete · a archive · m move · i ignore · e edit · h back'
-        : 'space select · d delete · a archive · m move · i ignore · e edit · ⏎ open · / search';
+        : entry?.kind === 'view' && entry.id === 'archived'
+          ? 'R restore · e open · space select · / search'
+          : row?.finding?.fixes.includes('relink')
+            ? 'L link into MEMORY.md · d delete · a archive · i ignore · e edit · ⏎ open'
+            : 'space select · d delete · a archive · m move · i ignore · e edit · ⏎ open · / search';
   const completion =
     mode === 'COMMAND' && cmd.trim()
       ? commands.filter((c) => c.name.startsWith(cmd.trim())).map((c) => c.name).slice(0, 6).join('  ')

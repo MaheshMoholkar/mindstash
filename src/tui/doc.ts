@@ -66,6 +66,20 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
     ].flatMap((l) => (l.gutter || l.text.length <= width ? [l] : wrap(l.text, width).map((t) => ({ ...l, text: t }))));
   }
 
+  if (row.archived) {
+    const a = row.archived;
+    return [
+      { text: a.name, bold: true, color: theme.accent },
+      { text: `${a.kind} · ${a.scope} · archived ${a.at.slice(0, 10)}`, dim: false, color: theme.fg },
+      blank,
+      section('Was at'),
+      { text: a.from },
+      section('Kept at'),
+      { text: a.to, dim: true },
+      blank,
+      { text: 'R restore it · e open the archived copy', color: theme.info },
+    ];
+  }
   if (row.group) {
     const g = row.group;
     return [

@@ -66,6 +66,7 @@ export const KEYS: [string, string][] = [
   ['[  ]', 'previous / next sidebar entry'],
   ['Space  V', 'select row / all rows'],
   ['d  a  m  i', 'delete · archive · move · not a problem'],
+  ['L  R', 'link into MEMORY.md · restore archived'],
   ['e', 'open in $EDITOR'],
   ['u', 'undo last change'],
   ['/', 'search this list'],
