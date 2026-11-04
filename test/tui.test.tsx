@@ -148,6 +148,7 @@ describe('full-screen UI', () => {
     expect(frame()).not.toContain('File 1 of 2');
     expect(frame()).not.toContain('First note for the old project.');
     expect(frame()).not.toContain('.claude/projects');
+    expect(frame()).not.toContain('d delete');
     await press('l');
     expect(frame()).toContain('~/old-project');
     expect(frame()).not.toMatch(/project gone|WHY FLAGGED|was not found on disk/);
@@ -156,6 +157,7 @@ describe('full-screen UI', () => {
     expect(frame()).not.toMatch(/second-note +d delete/);
     await press('j');
     expect(frame()).toMatch(/second-note +d delete/);
+    expect(frame().match(/d delete/g)).toHaveLength(1);
     await press('d');
     expect(frame()).toContain('Apply 1 change?');
     expect(frame()).toContain('second-note');

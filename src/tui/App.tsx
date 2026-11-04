@@ -764,14 +764,14 @@ export function App(props: AppProps) {
       : focus === 'detail'
         ? picking
           ? 'j/k pick file · e edit · h back'
-          : 'j/k scroll · d delete · a archive · m move · i ignore · e edit · h back'
+          : 'j/k scroll · a archive · m move · i ignore · e edit · h back'
         : entry?.kind === 'view' && entry.id === 'archived'
           ? 'R restore · e open · space select · / search'
           : row?.finding?.fixes.includes('relink')
-            ? 'L link into MEMORY.md · d delete · a archive · i ignore · e edit · ⏎ open'
+            ? 'L link into MEMORY.md · a archive · i ignore · e edit · ⏎ open'
             : row?.folder
-            ? `⏎ ${row.folder.collapsed ? 'open' : 'close'} folder · zR open all · zM close all · d a i act on all ${row.folder.children.length} · space select all`
-            : 'space select · d delete · a archive · m move · i ignore · e edit · ⏎ open · h close folder · / search';
+            ? `⏎ ${row.folder.collapsed ? 'open' : 'close'} folder · zR open all · zM close all · space select folder`
+            : 'space select · a archive · m move · i ignore · e edit · ⏎ open · h close folder · / search';
   const completion =
     mode === 'COMMAND' && cmd.trim()
       ? commands.filter((c) => c.name.startsWith(cmd.trim())).map((c) => c.name).slice(0, 6).join('  ')
