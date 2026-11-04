@@ -7,6 +7,7 @@ import { EventEmitter } from 'node:events';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { brotliDecompressSync } from 'node:zlib';
 import { Fixture } from '../test/fixture.js';
 import { sanitizePath } from '../src/core/text.js';
 
@@ -136,7 +137,24 @@ const gone = join(home, 'work', 'old-prototype');
 fx.memory(gone, 'prototype-notes.md', 'The prototype talks to a mock payments API on port 4010.', { description: 'Prototype setup' });
 fx.memory(gone, 'prototype-deploy.md', 'Deploy the prototype from the repo root with the fly CLI.', { description: 'Prototype deploy' });
 
-fx.skill(join(fx.claudeDir, 'skills'), 'use-railway', 'Deploy services to Railway');
+fx.write(
+  join(fx.claudeDir, 'skills', 'use-railway', 'SKILL.md'),
+  [
+    '---',
+    'name: use-railway',
+    'description: Deploy services to Railway',
+    '---',
+    '',
+    '# Deploy to Railway',
+    '',
+    '1. Check the service builds locally first.',
+    '2. Run the deploy from the service folder, never from the repo root.',
+    '3. Watch the build logs until the health check passes.',
+    '4. If the health check fails, roll back to the previous deploy.',
+    '5. Post the deploy link in the team channel.',
+    '',
+  ].join('\n'),
+);
 fx.plugin('railway', { 'use-railway': 'Deploy services to Railway' });
 fx.skill(join(fx.claudeDir, 'skills'), 'write-changelog', 'Write a changelog entry from the git log');
 fx.skill(join(fx.claudeDir, 'skills'), 'review-pr', 'Review a pull request for bugs and style');
@@ -147,6 +165,65 @@ fx.skill(join(home, '.agents', 'skills'), 'db-migrations', 'Write and check data
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, '');
+
+/** Code points the page's terminal font has, read from the woff2's cmap table. */
+function fontChars(path: string): Set<number> {
+  const buf = readFileSync(path);
+  const TAGS = ['cmap', 'head', 'hhea', 'hmtx', 'maxp', 'name', 'OS/2', 'post', 'cvt ', 'fpgm', 'glyf', 'loca', 'prep'];
+  let p = 48;
+  const uint = () => {
+    let v = 0;
+    for (;;) {
+      const b = buf[p++]!;
+      v = v * 128 + (b & 0x7f);
+      if (!(b & 0x80)) return v;
+    }
+  };
+  const lengths: { tag: string; len: number }[] = [];
+  for (let i = 0, n = buf.readUInt16BE(12); i < n; i++) {
+    const flags = buf[p++]!;
+    let tag = TAGS[flags & 0x3f] ?? '';
+    if ((flags & 0x3f) === 63) (tag = buf.toString('latin1', p, p + 4)), (p += 4);
+    let len = uint();
+    // glyf and loca are transformed at version 0, hmtx at version 1; transformed tables store a second length.
+    const version = flags >> 6;
+    if (tag === 'glyf' || tag === 'loca' ? version === 0 : tag === 'hmtx' && version === 1) len = uint();
+    lengths.push({ tag, len });
+  }
+  const data = brotliDecompressSync(buf.subarray(p, p + buf.readUInt32BE(20)));
+  let at = 0;
+  for (const t of lengths) {
+    if (t.tag === 'cmap') break;
+    at += t.len;
+  }
+  const cmap = data.subarray(at);
+  const have = new Set<number>();
+  for (let i = 0, n = cmap.readUInt16BE(2); i < n; i++) {
+    const sub = cmap.readUInt32BE(8 + i * 8);
+    const format = cmap.readUInt16BE(sub);
+    if (format === 4) {
+      const segs = cmap.readUInt16BE(sub + 6) / 2;
+      for (let k = 0; k < segs; k++) {
+        const end = cmap.readUInt16BE(sub + 14 + k * 2);
+        const start = cmap.readUInt16BE(sub + 16 + segs * 2 + k * 2);
+        for (let c = start; c <= end && c !== 0xffff; c++) have.add(c);
+      }
+    } else if (format === 12) {
+      for (let g = 0, groups = cmap.readUInt32BE(sub + 12); g < groups; g++) {
+        const start = cmap.readUInt32BE(sub + 16 + g * 12);
+        const end = cmap.readUInt32BE(sub + 20 + g * 12);
+        for (let c = start; c <= end; c++) have.add(c);
+      }
+    }
+  }
+  return have;
+}
+
+// Glyphs the font lacks come from a fallback font of another width; pin each to one column.
+const inFont = fontChars(fileURLToPath(new URL('../site/fonts/JetBrainsMono-Regular.woff2', import.meta.url)));
+if (!inFont.has(0x2502)) throw new Error('Could not read the character map of site/fonts/JetBrainsMono-Regular.woff2.');
+const pin = (s: string) =>
+  [...s].map((ch) => (inFont.has(ch.codePointAt(0)!) ? esc(ch) : `<span class="cell">${esc(ch)}</span>`)).join('');
 
 function toHtml(ansi: string): string {
   let fg: string | null = null;
@@ -161,7 +238,7 @@ function toHtml(ansi: string): string {
     // Spans never cross a line break, so each line stands alone.
     return text
       .split('\n')
-      .map((seg) => (seg && style ? `<span style="${style}">${esc(seg)}</span>` : esc(seg)))
+      .map((seg) => (seg && style ? `<span style="${style}">${pin(seg)}</span>` : pin(seg)))
       .join('\n');
   };
   let out = '';
@@ -214,6 +291,8 @@ function asShown<T>(value: T): T {
 
 interface Run {
   firstRun?: boolean;
+  /** Sidebar entry to open, like 'cat:stale'. */
+  entry?: string;
   /** Row the list cursor starts on. */
   cursor?: number;
   /** Use the real scan result. Needed for runs that apply fixes or read files (cost). */
@@ -226,7 +305,7 @@ async function session(run: Run, steps: (keys: Keys, term: Term) => Promise<void
   const keys = new Keys();
   const scanned = await scan(fx.ctx());
   const result = run.live ? scanned : asShown(scanned);
-  const initialUi = { entryKey: 'cat:all', focus: 'main' as const, cursor: run.cursor ?? 0, sidebarHidden: false };
+  const initialUi = { entryKey: run.entry ?? 'cat:all', focus: 'main' as const, cursor: run.cursor ?? 0, sidebarHidden: false };
   const app = render(
     <App
       ctx={fx.ctx()}
@@ -287,13 +366,11 @@ await session({ cursor: hackathon }, async (k, t) => {
   await press(k, '?');
   shot('help', t);
 });
-// Last, because it deletes demo files.
-await session({ live: true }, async (k, t) => {
-  await goTo(k, t, 'old-api-endpoints');
-  await press(k, ' ');
+// Last, because it deletes demo files. It clears the whole Stale list, so the screen after
+// the fix has no preview (previews show real file paths, and this run uses the real files).
+await session({ live: true, entry: 'cat:stale' }, async (k, t) => {
+  await press(k, 'V');
   await goTo(k, t, 'hackathon-notes');
-  await press(k, ' ');
-  await goTo(k, t, 'hackathon-notes'); // Space moved the cursor on; keep the long note behind the dialog
   await press(k, 'd');
   shot('confirm', t);
   await press(k, 'y');
@@ -309,7 +386,10 @@ for (const [name, ansi] of screens) {
   const leak = plain(ansi)
     .split('\n')
     .find((l) => l.includes(fx.root));
-  if (leak) throw new Error(`Screen "${name}" shows the demo's temp folder; pick another view:\n${leak}`);
+  if (leak) {
+    console.error(plain(ansi));
+    throw new Error(`Screen "${name}" (above) shows the demo's temp folder; pick another view:\n${leak}`);
+  }
   const re = new RegExp(`(<!-- screen:${name} -->)[\\s\\S]*?(<!-- /screen:${name} -->)`);
   if (!re.test(html)) missing.push(name);
   html = html.replace(re, (_m, open: string, close: string) => `${open}${toHtml(ansi)}${close}`);
