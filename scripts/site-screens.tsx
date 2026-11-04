@@ -13,17 +13,20 @@ import { sanitizePath } from '../src/core/text.js';
 // Colours must be on before chalk loads, so the UI is imported after this line.
 process.env.FORCE_COLOR = '3';
 const { render } = await import('ink');
-const { scan } = await import('../src/core/scan.js');
+const { scan, scanSnapshot } = await import('../src/core/scan.js');
+const { setTheme } = await import('../src/tui/theme.js');
+setTheme('tokyo-night', {});
 const { App } = await import('../src/tui/App.js');
 
-const COLS = 120;
 const ROWS = 32;
 const SITE = fileURLToPath(new URL('../site/index.html', import.meta.url));
 
 /** A fake terminal: fixed size, keeps the last frame. */
 class Term extends EventEmitter {
   isTTY = true;
-  columns = COLS;
+  constructor(readonly columns: number) {
+    super();
+  }
   rows = ROWS;
   frame = '';
   write = (f: string) => {
@@ -54,94 +57,109 @@ class Keys extends EventEmitter {
 
 /* ------------------------------------------------------------ demo home folder */
 
-const fx = new Fixture();
-const home = fx.home;
-const api = fx.project(
-  'work/api-server',
-  { 'package.json': '{"name":"api-server"}', 'src/routes/users.ts': 'x', 'src/api/v2/billing.ts': 'x' },
-  true,
-);
-fx.write(join(api, '.nvmrc'), '22\n');
-const blog = fx.project('work/blog', { 'index.md': 'x' }, true);
-const cli = fx.project('work/cli-tool', { 'main.go': 'x' }, true);
-fx.memory(blog, 'publishing.md', 'Posts are written in Markdown and published from the main branch.', { description: 'How posts ship' });
-fx.memory(cli, 'release.md', 'Releases are tagged by hand and built by the release workflow.', { description: 'How releases work' });
-// A CLAUDE.md in a plain parent folder: it loads in every project below it.
-fx.write(
-  join(home, 'work', 'CLAUDE.md'),
-  '# Work\n\n- Use the staging database for anything that writes data.\n- Ask before running migrations.\n- Keep the api-server changelog up to date.\n',
-);
+function seedDemo(): Fixture {
+  const fx = new Fixture();
+  const home = fx.home;
+  const api = fx.project(
+    'work/parcel-api',
+    { 'package.json': '{"name":"parcel-api"}', 'src/routes/shipments.ts': 'x', 'src/api/v2/labels.ts': 'x' },
+    true,
+  );
+  fx.write(join(api, '.nvmrc'), '22\n');
+  const blog = fx.project('work/parcel-docs', { 'index.md': 'x' }, true);
+  const cli = fx.project('work/warehouse-cli', { 'main.go': 'x' }, true);
+  fx.memory(blog, 'publishing.md', 'Posts are written in Markdown and published from the main branch.', { description: 'How posts ship' });
+  fx.memory(cli, 'release.md', 'Releases are tagged by hand and built by the release workflow.', { description: 'How releases work' });
+  // A CLAUDE.md in a plain parent folder: it loads in every project below it.
+  fx.write(
+    join(home, 'work', 'CLAUDE.md'),
+    '# Work\n\n- Use the staging database for anything that writes data.\n- Ask before running migrations.\n- Keep the parcel-api changelog up to date.\n',
+  );
 
-fx.write(
-  join(fx.claudeDir, 'CLAUDE.md'),
-  [
-    '# Working with me',
+  // A copy-pasted deployment history adds measurable overhead to every Claude Code session.
+  const deploymentHistory = Array.from({ length: 40 }, (_, i) => [
+    `### Release 2.${i + 1}`,
+    '- Verify the label renderer against the current carrier templates and compare the output against the sample shipments.',
+    '- Check the warehouse printer queue for failed jobs, confirm the retry worker drains the queue, and save the staging trace.',
+    '- Run a trial pickup, then compare the carrier manifest against the shipment ledger before handing the queue back to operations.',
+    '- Record the deployment time, rollback revision, operator handoff, and follow-up items in the release ticket.',
     '',
-    '- Prefer small, focused commits with clear messages.',
-    '- Run the linter and the tests before saying a change is done; say so when you skip them.',
-    '- Ask before adding a dependency, and explain why the standard library is not enough.',
-    '- Keep explanations short. Lead with the answer, then the reasoning.',
-    '- Use TypeScript strict mode in new projects and avoid `any` unless there is no other way.',
-    '- When a task is ambiguous, list the options with one line each and pick a default.',
-    '- Never commit secrets. Read credentials from the environment.',
-    '- Prefer editing existing files over creating new ones.',
-    '- Write tests next to the code they cover, named after the behaviour, not the function.',
-    '- Match the style of the file you are editing, even when you would format it differently.',
-    '',
-  ].join('\n'),
-);
-fx.write(
-  join(api, 'CLAUDE.md'),
-  '# api-server\n\n- Routes live in src/routes; validate every request body with zod.\n- Return typed errors; never throw raw strings.\n- Database access goes through the repository layer, not the route handlers.\n',
-);
-fx.write(join(fx.codexDir, 'AGENTS.md'), '# Defaults\n\n- Keep diffs small.\n- Ask before adding a dependency.\n- Explain trade-offs in a sentence or two.\n');
+  ].join('\n')).join('\n');
+  fx.write(
+    join(fx.claudeDir, 'CLAUDE.md'),
+    [
+      '# Working with me',
+      '',
+      '- Prefer small, focused commits with clear messages.',
+      '- Run the linter and the tests before saying a change is done; say so when you skip them.',
+      '- Ask before adding a dependency, and explain why the standard library is not enough.',
+      '- Keep explanations short. Lead with the answer, then the reasoning.',
+      '- Use TypeScript strict mode in new projects and avoid `any` unless there is no other way.',
+      '- When a task is ambiguous, list the options with one line each and pick a default.',
+      '- Never commit secrets. Read credentials from the environment.',
+      '- Prefer editing existing files over creating new ones.',
+      '- Write tests next to the code they cover, named after the behaviour, not the function.',
+      '- Match the style of the file you are editing, even when you would format it differently.',
+      '',
+      '## Deployment history',
+      '',
+      deploymentHistory,
+    ].join('\n'),
+  );
+  fx.write(
+    join(api, 'CLAUDE.md'),
+    '# parcel-api\n\n- Routes live in src/routes; validate every request body with zod.\n- Return typed errors; never throw raw strings.\n- Database access goes through the repository layer, not the route handlers.\n',
+  );
+  fx.write(join(fx.codexDir, 'AGENTS.md'), '# Defaults\n\n- Keep diffs small.\n- Ask before adding a dependency.\n- Explain trade-offs in a sentence or two.\n');
 
-fx.memory(
-  home,
-  'hackathon-notes.md',
-  [
-    'Team hackathon Oct 15–18 2026. Demo on Friday at booth 12.',
-    'Keep answers short during the event.',
-    '',
-    '- The demo runs from the hackathon branch; keep it deployable.',
-    '- Skip refactors until judging is over.',
-    '- Slides are in the team drive, in the Hackathon 2026 folder.',
-    '- Priya owns the backend demo, Sam owns the slides.',
-  ].join('\n'),
-  { description: 'Hackathon plans and demo slot', modified: '2026-10-02' },
-);
-fx.memory(
-  home,
-  'api-server-conventions.md',
-  'In ~/work/api-server, handlers live in src/routes and validate input with zod.\nRun the migrations in ~/work/api-server before the tests.',
-  { description: 'How the api-server repo is laid out' },
-);
-fx.memory(home, 'user-role.md', 'The user is a backend developer who works mostly in TypeScript and Go.', { description: 'Who the user is' });
-fx.memory(home, 'prefers-short-answers.md', 'User wants short answers with no fluff; skip long intros and get straight to the point.', {
-  description: 'Answer style',
-});
-fx.memory(home, 'concise-responses.md', 'User wants short answers with no fluff; skip the long intros and get right to the point.', {
-  description: 'Keep responses brief',
-});
-fx.memory(
-  api,
-  'old-api-endpoints.md',
-  'Old billing endpoints live in `src/api/v1/billing.ts`; new ones go in `src/api/v2/billing.ts`.\nInvoices are generated nightly by the billing worker.',
-  { description: 'Where billing endpoints live' },
-);
-fx.memory(api, 'testing.md', 'Run the test suite before committing. Tests use vitest with a local Postgres.', { description: 'How to test' });
-fx.memory(api, 'node-version.md', 'Always use Node 16 for the cron runner.', { description: 'Node version' });
-fx.memory(api, 'ci-setup.md', 'The cron runner must use Node 22 from now on.', { description: 'CI runtime' });
-const gone = join(home, 'work', 'old-prototype');
-fx.memory(gone, 'prototype-notes.md', 'The prototype talks to a mock payments API on port 4010.', { description: 'Prototype setup' });
-fx.memory(gone, 'prototype-deploy.md', 'Deploy the prototype from the repo root with the fly CLI.', { description: 'Prototype deploy' });
+  fx.memory(
+    home,
+    'launch-checklist.md',
+    [
+      'Parcel beta launch Oct 15–18 2026. The pilot starts Friday at the test warehouse.',
+      'Keep answers short during the event.',
+      '',
+      '- The demo runs from the beta branch; keep it deployable.',
+      '- Skip refactors until the pilot ends.',
+      '- Send the pilot guide to the warehouse team before opening enrollment.',
+      '- Print a sample shipping label before the first pickup.',
+    ].join('\n'),
+    { description: 'Checklist for the parcel beta launch', modified: '2026-10-02' },
+  );
+  fx.memory(
+    home,
+    'parcel-api-conventions.md',
+    'In ~/work/parcel-api, handlers live in src/routes and validate input with zod.\nRun the migrations in ~/work/parcel-api before the tests.',
+    { description: 'How the parcel-api repo is laid out' },
+  );
+  fx.memory(home, 'user-role.md', 'The user is a backend developer who works mostly in TypeScript and Go.', { description: 'Who the user is' });
+  fx.memory(home, 'prefers-short-answers.md', 'User wants short answers with no fluff; skip long intros and get straight to the point.', {
+    description: 'Answer style',
+  });
+  fx.memory(home, 'concise-responses.md', 'User wants short answers with no fluff; skip the long intros and get right to the point.', {
+    description: 'Keep responses brief',
+  });
+  fx.memory(
+    api,
+    'label-api-v1.md',
+    'Old labels endpoints live in `src/api/v1/labels.ts`; new ones go in `src/api/v2/labels.ts`.\nInvoices are generated nightly by the labels worker.',
+    { description: 'Where labels endpoints live' },
+  );
+  fx.memory(api, 'testing.md', 'Run the test suite before committing. Tests use vitest with a local Postgres.', { description: 'How to test' });
+  fx.memory(api, 'node-version.md', 'Always use Node 16 for the cron runner.', { description: 'Node version' });
+  fx.memory(api, 'ci-setup.md', 'The cron runner must use Node 22 from now on.', { description: 'CI runtime' });
+  const gone = join(home, 'work', 'label-poc');
+  fx.memory(gone, 'label-poc-notes.md', 'The prototype talks to a mock payments API on port 4010.', { description: 'Prototype setup' });
+  fx.memory(gone, 'label-poc-deploy.md', 'Deploy the prototype from the repo root with the fly CLI.', { description: 'Prototype deploy' });
 
-fx.skill(join(fx.claudeDir, 'skills'), 'use-railway', 'Deploy services to Railway');
-fx.plugin('railway', { 'use-railway': 'Deploy services to Railway' });
-fx.skill(join(fx.claudeDir, 'skills'), 'write-changelog', 'Write a changelog entry from the git log');
-fx.skill(join(fx.claudeDir, 'skills'), 'review-pr', 'Review a pull request for bugs and style');
-fx.write(join(fx.codexDir, 'config.toml'), `[projects."${api}"]\ntrust_level = "trusted"\n`);
-fx.skill(join(home, '.agents', 'skills'), 'db-migrations', 'Write and check database migrations');
+  fx.skill(join(fx.claudeDir, 'skills'), 'deploy-preview', 'Create a staging deployment for a pull request');
+  fx.plugin('railway', { 'deploy-preview': 'Create a staging deployment for a pull request' });
+  fx.skill(join(fx.claudeDir, 'skills'), 'write-changelog', 'Write a changelog entry from the git log');
+  fx.skill(join(fx.claudeDir, 'skills'), 'review-pr', 'Review a pull request for bugs and style');
+  fx.write(join(fx.codexDir, 'config.toml'), `[projects."${api}"]\ntrust_level = "trusted"\n`);
+  fx.skill(join(home, '.agents', 'skills'), 'db-migrations', 'Write and check database migrations');
+  return fx;
+}
 
 /* ------------------------------------------------------------------ ANSI → HTML */
 
@@ -196,52 +214,12 @@ function toHtml(ansi: string): string {
 const tick = (ms = 80) => new Promise((r) => setTimeout(r, ms));
 const screens = new Map<string, string>();
 
-/** Show the demo folder as /Users/you, in a copy of the scan result (the files stay where they are). */
-const SHOWN_HOME = '/Users/you';
-function asShown<T>(value: T): T {
-  const swap = (s: string) =>
-    s.split(fx.home).join(SHOWN_HOME).split(sanitizePath(fx.home)).join(sanitizePath(SHOWN_HOME));
-  const walk = (v: unknown): unknown => {
-    if (typeof v === 'string') return swap(v);
-    if (Array.isArray(v)) return v.map(walk);
-    if (v && typeof v === 'object' && !(v instanceof Date)) {
-      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]));
-    }
-    return v;
-  };
-  return walk(value) as T;
-}
+const SHOWN_HOME = '/home/demo';
 
 interface Run {
   firstRun?: boolean;
   /** Row the list cursor starts on. */
   cursor?: number;
-  /** Use the real scan result. Needed for runs that apply fixes or read files (cost). */
-  live?: boolean;
-}
-
-/** One app run. Other runs get the renamed copy of the scan result. */
-async function session(run: Run, steps: (keys: Keys, term: Term) => Promise<void>) {
-  const term = new Term();
-  const keys = new Keys();
-  const scanned = await scan(fx.ctx());
-  const result = run.live ? scanned : asShown(scanned);
-  const initialUi = { entryKey: 'cat:all', focus: 'main' as const, cursor: run.cursor ?? 0, sidebarHidden: false };
-  const app = render(
-    <App
-      ctx={fx.ctx()}
-      firstRun={run.firstRun ?? false}
-      selfCommand="mindstash"
-      initialResult={result}
-      initialUi={initialUi}
-      onEdit={() => {}}
-    />,
-    { stdout: term as never, stderr: new Term() as never, stdin: keys as never, debug: true, exitOnCtrlC: false, patchConsole: false },
-  );
-  await tick(150);
-  await steps(keys, term);
-  app.unmount();
-  await tick(50);
 }
 
 async function press(keys: Keys, ...input: string[]) {
@@ -253,68 +231,136 @@ async function press(keys: Keys, ...input: string[]) {
 
 /** Move the list cursor (▌) onto the row whose text includes `name`. */
 async function goTo(keys: Keys, term: Term, name: string) {
-  const lines = plain(term.frame).split('\n');
-  const at = lines.findIndex((l) => l.includes('▌'));
-  const want = lines.findIndex((l) => l.includes(name));
+  const rows = plain(term.frame).split('\n')
+    .map((line) => line.split('│')[3] ?? '')
+    .filter((line) => line.trim() && !line.trimStart().startsWith('━━') && !line.trimStart().startsWith('NAME'));
+  const at = rows.findIndex((line) => line.includes('▌'));
+  const want = rows.findIndex((line) => line.includes(name));
   if (at < 0 || want < 0) throw new Error(`Row not found on screen: ${name}`);
   const n = want - at;
   await press(keys, ...Array(Math.abs(n)).fill(n > 0 ? 'j' : 'k'));
   return n;
 }
 
-const shot = (name: string, term: Term) => screens.set(name, term.frame);
+async function captureScreens(cols: number, suffix: string) {
+  const fx = seedDemo();
+  /** Run the real UI with the isolated workspace and a fixed demo date. */
+  async function session(run: Run, steps: (keys: Keys, term: Term) => Promise<void>) {
+    const term = new Term(cols);
+    const keys = new Keys();
+    const ctx = fx.ctx();
+    const result = await scan(ctx);
+    const initialUi = { entryKey: 'cat:all', focus: 'main' as const, cursor: run.cursor ?? 0, sidebarHidden: false };
+    const app = render(
+      <App
+        ctx={ctx}
+        refresh={() => scanSnapshot(ctx)}
+        firstRun={run.firstRun ?? false}
+        selfCommand="mindstash"
+        initialResult={result}
+        initialUi={initialUi}
+        onEdit={() => {}}
+      />,
+      { stdout: term as never, stderr: new Term(cols) as never, stdin: keys as never, debug: true, exitOnCtrlC: false, patchConsole: false },
+    );
+    try {
+      await tick(150);
+      await steps(keys, term);
+    } finally {
+      app.unmount();
+      await tick(50);
+    }
+  }
 
-// Dialog screens keep the cursor on the hackathon note, so the same preview shows behind them.
-let hackathon = 0;
-await session({}, async (k, t) => {
-  hackathon = await goTo(k, t, 'hackathon-notes');
-  shot('main', t);
-  await press(k, 'l');
-  shot('detail', t);
-});
-await session({ firstRun: true, cursor: hackathon }, async (_k, t) => {
-  shot('welcome', t);
-});
-await session({ live: true }, async (k, t) => {
-  await press(k, ...':cost', '\r');
-  shot('cost', t);
-});
-await session({ cursor: hackathon }, async (k, t) => {
-  await press(k, '\u0010', ...'sim');
-  shot('palette', t);
-});
-await session({ cursor: hackathon }, async (k, t) => {
-  await press(k, '?');
-  shot('help', t);
-});
-// Last, because it deletes demo files.
-await session({ live: true }, async (k, t) => {
-  await goTo(k, t, 'old-api-endpoints');
-  await press(k, ' ');
-  await goTo(k, t, 'hackathon-notes');
-  await press(k, ' ');
-  await goTo(k, t, 'hackathon-notes'); // Space moved the cursor on; keep the long note behind the dialog
-  await press(k, 'd');
-  shot('confirm', t);
-  await press(k, 'y');
-  await tick(300);
-  shot('applied', t);
-});
+  try {
+    function shot(name: string, term: Term, expected?: string) {
+      if (expected && !plain(term.frame).includes(expected)) {
+        throw new Error(`Screen "${name}" is missing "${expected}".\n${plain(term.frame)}`);
+      }
+      // Live actions need the real paths. Mask them after rendering, including paths
+      // the terminal clipped with an ellipsis, while preserving the pane width.
+      let frame = term.frame;
+      for (const [source, shown] of [
+        [fx.home, SHOWN_HOME],
+        [sanitizePath(fx.home), sanitizePath(SHOWN_HOME)],
+      ] as const) {
+        const escaped = source.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        frame = frame.replace(new RegExp(escaped + '[^\\s\\x1b│]*', 'g'), (path) =>
+          (shown + path.slice(source.length)).padEnd(path.length));
+        for (let length = source.length - 1; length >= 14; length--) {
+          frame = frame.replaceAll(source.slice(0, length) + '…', (shown + '/…').padEnd(length + 1));
+        }
+      }
+      const cleaned = plain(frame);
+      if (cleaned.includes(fx.root) || cleaned.includes(sanitizePath(fx.root))) {
+        throw new Error(`Screen "${name}" contains a temporary workspace path.`);
+      }
+      screens.set(name + suffix, frame);
+    }
+
+    // Dialog screens keep the cursor on the launch note, so the same preview shows behind them.
+    let launch = 0;
+    await session({}, async (k, t) => {
+      launch = await goTo(k, t, 'launch-checklist');
+      shot('main', t, 'launch-checklist');
+      await press(k, 'l');
+      shot('detail', t, 'WHY FLAGGED');
+    });
+    await session({ firstRun: true, cursor: launch }, async (k, t) => {
+      shot('welcome', t);
+      await press(k, '\r');
+      shot('tour', t, 'Tour 1/3');
+    });
+    await session({}, async (k, t) => {
+      await press(k, ...':cost', '\r');
+      shot('cost', t, 'Token cost');
+    });
+    await session({ cursor: launch }, async (k, t) => {
+      await press(k, '\u0010', ...'sim');
+      shot('palette', t);
+    });
+    await session({ cursor: launch }, async (k, t) => {
+      await press(k, '?');
+      shot('help', t);
+    });
+    await session({}, async (k, t) => {
+      await goTo(k, t, 'parcel-api-conventions');
+      await press(k, 'm');
+      shot('move', t, 'Move to another project');
+      await press(k, '\r');
+      shot('move-confirm', t, '→ move parcel-api-conventions');
+    });
+    // Last, because it deletes demo files.
+    await session({}, async (k, t) => {
+      await goTo(k, t, 'label-api-v1');
+      await press(k, ' ');
+      await goTo(k, t, 'launch-checklist');
+      await press(k, ' ');
+      await goTo(k, t, 'launch-checklist'); // Space moved the cursor on; keep the long note behind the dialog
+      await press(k, 'd');
+      shot('confirm', t, 'Apply 2 changes?');
+      await press(k, 'y');
+      await tick(300);
+      shot('applied', t, '2 changes applied');
+    });
+  } finally {
+    fx.cleanup();
+  }
+}
+
+await captureScreens(160, '');
+await captureScreens(96, '-compact');
 
 /* ------------------------------------------------------------- write into site */
 
 let html = readFileSync(SITE, 'utf8');
 const missing: string[] = [];
 for (const [name, ansi] of screens) {
-  const leak = plain(ansi)
-    .split('\n')
-    .find((l) => l.includes(fx.root));
-  if (leak) throw new Error(`Screen "${name}" shows the demo's temp folder; pick another view:\n${leak}`);
   const re = new RegExp(`(<!-- screen:${name} -->)[\\s\\S]*?(<!-- /screen:${name} -->)`);
   if (!re.test(html)) missing.push(name);
   html = html.replace(re, (_m, open: string, close: string) => `${open}${toHtml(ansi)}${close}`);
 }
+if (missing.length) throw new Error(`Missing site markers for: ${missing.join(', ')}`);
 writeFileSync(SITE, html);
-fx.cleanup();
-console.log(`Wrote ${screens.size - missing.length} screens to site/index.html${missing.length ? ` (no marker for: ${missing.join(', ')})` : ''}`);
+console.log(`Wrote ${screens.size} screens to site/index.html`);
 process.exit(0);
