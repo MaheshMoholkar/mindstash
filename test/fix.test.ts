@@ -138,3 +138,53 @@ describe('re-learning guard', () => {
     expect(re!.title).toContain('stale');
   });
 });
+
+describe('acting on one memory or skill directly', () => {
+  it('deletes a whole skill folder by item id, and undo brings every file back', async () => {
+    const skill = fx.skill(join(fx.claudeDir, 'skills'), 'old-helper', 'Helps with an old workflow');
+    const ref = fx.write(join(fx.claudeDir, 'skills', 'old-helper', 'references', 'notes.md'), 'extra');
+    const r = await scan(fx.ctx());
+    const item = r.items.find((i) => i.kind === 'skill' && i.name === 'old-helper')!;
+    const p = plan(fx.ctx(), { delete: [item.id] });
+    expect(p.actions[0]!.kind).toBe('delete-skill');
+    apply(fx.ctx(), p);
+    expect(existsSync(skill)).toBe(false);
+    expect(existsSync(ref)).toBe(false);
+    undo(fx.ctx());
+    expect(readFileSync(ref, 'utf8')).toBe('extra');
+    expect(existsSync(skill)).toBe(true);
+  });
+
+  it('archives a skill into ~/.mindstash/archive', async () => {
+    const skill = fx.skill(join(fx.claudeDir, 'skills'), 'rarely-used', 'Something rarely used');
+    const r = await scan(fx.ctx());
+    const item = r.items.find((i) => i.name === 'rarely-used')!;
+    apply(fx.ctx(), plan(fx.ctx(), { archive: [item.id] }));
+    expect(existsSync(skill)).toBe(false);
+    expect(existsSync(join(fx.mindstashDir, 'archive', 'claude-code', 'skills', 'rarely-used', 'SKILL.md'))).toBe(true);
+  });
+
+  it('deletes an unflagged memory by item id, removing its index line', async () => {
+    const repo = fx.project('repo');
+    const m = fx.memory(repo, 'fine.md', 'A perfectly fine note the user no longer wants.');
+    const r = await scan(fx.ctx());
+    const item = r.items.find((i) => i.kind === 'memory')!;
+    apply(fx.ctx(), plan(fx.ctx(), { delete: [item.id] }));
+    expect(existsSync(m)).toBe(false);
+    expect(index(repo)).not.toContain('fine.md');
+  });
+
+  it('refuses plugin skills and linked skill folders', async () => {
+    fx.plugin('railway', { 'use-railway': 'Deploy to Railway' });
+    const target = fx.skill(join(fx.root, 'elsewhere'), 'linked', 'A linked skill');
+    const { mkdirSync, symlinkSync } = await import('node:fs');
+    mkdirSync(join(fx.claudeDir, 'skills'), { recursive: true });
+    symlinkSync(join(target, '..'), join(fx.claudeDir, 'skills', 'linked'));
+    const r = await scan(fx.ctx());
+    const plugin = r.items.find((i) => i.name === 'railway:use-railway')!;
+    const linked = r.items.find((i) => i.name === 'linked')!;
+    expect(() => plan(fx.ctx(), { delete: [plugin.id] })).toThrow(/Unknown id/);
+    expect(() => plan(fx.ctx(), { delete: [linked.id] })).toThrow(/link to another folder/);
+    expect(existsSync(target)).toBe(true);
+  });
+});

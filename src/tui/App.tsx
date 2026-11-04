@@ -1,184 +1,641 @@
-import { Box, Text, useApp } from 'ink';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { scan } from '../core/scan.js';
-import { apply, FixError, plan, undo, type Plan, type Requests } from '../core/fix.js';
-import { loadState } from '../core/state.js';
-import type { ScanContext, ScanResult } from '../core/types.js';
+import { Box, Text, useApp, useInput } from 'ink';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { agentName } from '../adapters/index.js';
+import { costRows } from '../cli/format.js';
 import { installSkills, skillInstalled } from '../cli/skill.js';
-import type { Nav, Screen, Toast } from './types.js';
-import { fmt } from './ui.js';
-import { FirstRun, Home, OfferSkill } from './screens/Home.js';
-import { Findings } from './screens/Findings.js';
-import { Confirm, ConfirmUndo, Detail, ItemView } from './screens/Detail.js';
-import { Browse, Cost, Help } from './screens/Browse.js';
+import { pending } from '../core/contradictions.js';
+import { baselines, cost } from '../core/cost.js';
+import { apply, describe, FixError, plan, undo, type Requests } from '../core/fix.js';
+import { actionable, scan } from '../core/scan.js';
+import { loadState, type Pair } from '../core/state.js';
+import { plural } from '../core/text.js';
+import type { FixKind, ScanContext, ScanResult } from '../core/types.js';
+import { pathsOf, rowsFor, selectable, sidebarEntries, type Entry, type Row } from './data.js';
+import { docFor, editability } from './doc.js';
+import { fuzzy, helpLines, Modal, paletteLines, type PaletteItem } from './overlays.js';
+import { CommandLine, Doc, List, Sidebar, StatusLine, type Mode } from './panes.js';
+import { theme } from './theme.js';
+import type { Focus, Message, Overlay, Ui } from './types.js';
+import { fmt, useSize, wrap, type Line } from './ui.js';
 
 export interface AppProps {
   ctx: ScanContext;
   firstRun: boolean;
   /** Command the installed skill should use to call MindStash. */
   selfCommand: string;
-  initialStack?: Screen[];
-  /** Leave Ink so the user's editor can take over the terminal. */
-  onEdit(paths: string[], stack: Screen[]): void;
+  initialUi?: Ui;
+  /** Leave the UI so the user's editor can take over the terminal. */
+  onEdit(paths: string[], ui: Ui): void;
   /** Tests pass a result to skip the real scan. */
   initialResult?: ScanResult;
 }
 
+interface Command {
+  name: string;
+  aliases?: string[];
+  title: string;
+  run(arg?: string): void;
+}
+
+const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
+
+function pendingPairs(ctx: ScanContext, r: ScanResult): Pair[] {
+  try {
+    return pending(loadState(ctx.mindstashDir), r.items, r.projects).pairs;
+  } catch {
+    return [];
+  }
+}
+
 export function App(props: AppProps) {
   const { exit } = useApp();
+  const { cols, rows: termRows } = useSize();
+  const { ctx } = props;
+
   const [result, setResult] = useState<ScanResult | null>(props.initialResult ?? null);
-  const [stack, setStack] = useState<Screen[]>(
-    props.initialStack ?? [props.firstRun ? { kind: 'first' } : { kind: 'home' }],
-  );
-  const [toast, setToast] = useState<Toast | null>(null);
+  const [pairs, setPairs] = useState<Pair[]>(() => (props.initialResult ? pendingPairs(ctx, props.initialResult) : []));
+  const [entryKey, setEntryKey] = useState(props.initialUi?.entryKey ?? 'cat:all');
+  const [focus, setFocus] = useState<Focus>(props.initialUi?.focus ?? 'main');
+  const [cursor, setCursor] = useState(props.initialUi?.cursor ?? 0);
+  const [offset, setOffset] = useState(0);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [mode, setMode] = useState<'NORMAL' | 'SEARCH' | 'COMMAND'>('NORMAL');
+  const [query, setQuery] = useState('');
+  const [cmd, setCmd] = useState('');
+  const [overlay, setOverlay] = useState<Overlay | null>(props.firstRun ? { kind: 'welcome' } : null);
+  const [message, setMessage] = useState<Message | undefined>();
+  const [sidebarHidden, setSidebarHidden] = useState(props.initialUi?.sidebarHidden ?? false);
   const [fatal, setFatal] = useState<string | null>(null);
+  const vim = useRef({ count: '', g: false });
 
   const rescan = useCallback(async () => {
-    const r = await scan(props.ctx);
+    const r = await scan(ctx);
     setResult(r);
-  }, [props.ctx]);
+    setPairs(pendingPairs(ctx, r));
+    return r;
+  }, [ctx]);
 
   useEffect(() => {
     if (props.initialResult) return;
-    // Let the "Scanning…" frame paint before the (synchronous) scan blocks.
+    // Let the first frame paint before the (synchronous) scan blocks.
     const t = setTimeout(() => rescan().catch((e: Error) => setFatal(e.message)), 10);
     return () => clearTimeout(t);
   }, []);
 
-  const push = useCallback((s: Screen) => {
-    setToast(null);
-    setStack((st) => [...st, s]);
-  }, []);
-  const pop = useCallback(() => setStack((st) => (st.length > 1 ? st.slice(0, -1) : st)), []);
+  /* ---------------------------------------------------------------- derived */
 
-  const nav: Nav | null = useMemo(() => {
-    if (!result) return null;
-    const n: Nav = {
-      ctx: props.ctx,
-      result,
-      push,
-      pop,
-      reset: (s: Screen) => {
-        setToast(null);
-        setStack([s]);
-      },
-      skillInstalled: () => skillInstalled(props.ctx),
-      toast: setToast,
-      quit: () => exit(),
-      act(req: Requests) {
-        try {
-          const p = plan(props.ctx, req);
-          if (p.actions.length) push({ kind: 'confirm', plan: p });
-        } catch (e) {
-          if (e instanceof FixError) setToast({ tone: 'error', text: e.message });
-          else throw e;
-        }
-      },
-      apply(p: Plan) {
-        try {
-          apply(props.ctx, p);
-        } catch (e) {
-          setToast({ tone: 'error', text: (e as Error).message });
-          pop();
-          return;
-        }
-        const k = p.actions.length;
-        const saved = p.tokensSaved ? ` · saved ~${fmt(p.tokensSaved)} tokens per session` : '';
-        void rescan().then(() => {
-          pop();
-          setToast({ tone: 'ok', text: `✓ ${k} change${k === 1 ? '' : 's'} applied${saved}`, undo: true });
-        });
-      },
-      askUndo() {
-        const op = [...loadState(props.ctx.mindstashDir).history].reverse().find((o) => !o.undone);
-        if (!op) setToast({ tone: 'info', text: 'Nothing to undo.' });
-        else push({ kind: 'undo', op });
-      },
-      undo() {
-        try {
-          undo(props.ctx);
-        } catch (e) {
-          setToast({ tone: 'error', text: (e as Error).message });
-          pop();
-          return;
-        }
-        void rescan().then(() => {
-          pop();
-          setToast({ tone: 'ok', text: '✓ Undone.' });
-        });
-      },
-      edit(paths: string[]) {
-        props.onEdit(paths, stack);
-        exit();
-      },
-      installSkill() {
-        const done = installSkills(props.ctx, props.selfCommand);
-        setToast({ tone: 'ok', text: `✓ Added ${done.map((d) => `${d.invoke} to ${d.name}`).join(' and ')}.` });
-      },
-      common(input, key) {
-        if (key.escape) pop();
-        else if (input === 'q') exit();
-        else if (input === '?') push({ kind: 'help' });
-        else if (input === 'u') n.askUndo();
-      },
+  const entries = useMemo(() => (result ? sidebarEntries(result, pairs) : []), [result, pairs]);
+  const found = entries.findIndex((e) => e.key === entryKey && selectable(e));
+  const entryIdx = found >= 0 ? found : entries.findIndex(selectable);
+  const entry: Entry | undefined = entries[entryIdx];
+  const rows = useMemo(() => (result ? rowsFor(entry, result, pairs, query) : []), [entry, result, pairs, query]);
+  const cur = clamp(cursor, 0, Math.max(0, rows.length - 1));
+  const row: Row | undefined = rows[cur];
+  const isCost = entry?.kind === 'view' && entry.id === 'cost';
+
+  const showSidebar = !sidebarHidden && cols >= 72;
+  const sw = showSidebar ? (cols >= 120 ? 34 : cols >= 96 ? 30 : 26) : 0;
+  const mw = cols - sw;
+  const bodyH = termRows - 2;
+  const listH = Math.max(6, Math.floor(bodyH * 0.45));
+  const docW = mw - 4;
+
+  const costLines: Line[] = useMemo(() => {
+    if (!result || !isCost) return [];
+    return costRows(cost(result, ctx.home)).map((r) => ({
+      text: r.text,
+      bold: r.style === 'bold',
+      dim: r.style === 'dim',
+      color: r.style === 'bold' ? theme.accent : undefined,
+    }));
+  }, [result, isCost]);
+
+  const docLines = useMemo(
+    () => (result ? (isCost ? costLines : docFor(row, result, docW, focus === 'detail')) : []),
+    [result, row, docW, focus, isCost, costLines],
+  );
+  const docHeight = isCost || focus === 'detail' ? bodyH : bodyH - listH;
+  const maxOffset = Math.max(0, docLines.length - (docHeight - 2));
+
+  // Keep the cursor valid when the list shrinks (after a fix, or while searching).
+  useEffect(() => {
+    if (cursor !== cur) setCursor(cur);
+  }, [cur]);
+
+  /* ---------------------------------------------------------------- navigation */
+
+  const goEntry = (key: string) => {
+    setEntryKey(key);
+    setCursor(0);
+    setOffset(0);
+    setSelected(new Set());
+    setQuery('');
+    if (focus === 'detail') setFocus('main');
+  };
+
+  const moveSidebar = (delta: number) => {
+    const idx = entries.map((e, i) => (selectable(e) ? i : -1)).filter((i) => i >= 0);
+    const at = idx.indexOf(entryIdx);
+    const next = idx[clamp((at === -1 ? 0 : at) + delta, 0, idx.length - 1)];
+    if (next !== undefined) goEntry(entries[next]!.key);
+  };
+
+  const move = (delta: number) => {
+    if (focus === 'sidebar') return moveSidebar(delta);
+    if (focus === 'detail' || isCost) return setOffset((o) => clamp(o + delta, 0, maxOffset));
+    setCursor((c) => clamp(c + delta, 0, Math.max(0, rows.length - 1)));
+    setOffset(0);
+  };
+
+  const jump = (to: 'top' | 'bottom' | number) => {
+    if (focus === 'sidebar') return moveSidebar(to === 'top' ? -1e9 : to === 'bottom' ? 1e9 : 0);
+    if (focus === 'detail' || isCost) return setOffset(to === 'top' ? 0 : to === 'bottom' ? maxOffset : clamp(to, 0, maxOffset));
+    setCursor(to === 'top' ? 0 : to === 'bottom' ? Math.max(0, rows.length - 1) : clamp(to, 0, Math.max(0, rows.length - 1)));
+  };
+
+  const focusRight = () => {
+    if (focus === 'sidebar') setFocus('main');
+    else if (focus === 'main' && row && !isCost) {
+      setFocus('detail');
+      setOffset(0);
+    }
+  };
+  const focusLeft = () => {
+    if (focus === 'detail') setFocus('main');
+    else if (focus === 'main' && showSidebar) setFocus('sidebar');
+  };
+
+  /* ---------------------------------------------------------------- actions */
+
+  const ui = (): Ui => ({ entryKey: entry?.key ?? entryKey, focus, cursor: cur, sidebarHidden });
+
+  const targets = (): Row[] =>
+    focus === 'sidebar' ? [] : selected.size ? rows.filter((r) => selected.has(r.key)) : row ? [row] : [];
+
+  const act = (kind: FixKind) => {
+    const rs = targets();
+    if (!rs.length) return setMessage({ tone: 'info', text: 'Pick a row first (l to move into the list).' });
+    const ids: string[] = [];
+    let why = '';
+    for (const r of rs) {
+      if (r.pair) why = 'Contradiction candidates are judged by your agent: /mindstash or $mindstash.';
+      else if (r.finding?.fixes.includes(kind)) ids.push(r.finding.id);
+      else if (r.item && (kind === 'delete' || kind === 'archive') && actionable(r.item)) ids.push(r.item.id);
+      else if (r.item && !actionable(r.item)) why = `${r.item.name}: ${editability(r.item)}.`;
+      else if (r.finding) {
+        why = `${kind} isn't offered for this finding.${kind === 'delete' || kind === 'archive' ? ' Open its scope under SCOPES to act on one file.' : ''}`;
+      }
+    }
+    if (!ids.length) return setMessage({ tone: 'error', text: why || `Nothing here can be ${kind}d.` });
+    try {
+      const p = plan(ctx, { [kind]: ids } as Requests);
+      if (!p.actions.length) return setMessage({ tone: 'info', text: 'Nothing to change.' });
+      setOverlay({ kind: 'confirm', plan: p });
+      if (rs.length > ids.length) {
+        setMessage({ tone: 'info', text: `${rs.length - ids.length} of the selected rows can't be ${kind}d and were left out.` });
+      }
+    } catch (e) {
+      if (e instanceof FixError) setMessage({ tone: 'error', text: e.message });
+      else throw e;
+    }
+  };
+
+  const askUndo = () => {
+    const op = [...loadState(ctx.mindstashDir).history].reverse().find((o) => !o.undone);
+    if (!op) setMessage({ tone: 'info', text: 'Nothing to undo.' });
+    else setOverlay({ kind: 'undo', op });
+  };
+
+  const edit = () => {
+    if (!result) return;
+    const picked = focus === 'sidebar' ? [] : selected.size ? rows.filter((r) => selected.has(r.key)) : row ? [row] : [];
+    const paths = [...new Set(picked.flatMap((r) => pathsOf(r, result)))];
+    if (!paths.length) return setMessage({ tone: 'info', text: 'Nothing to open here.' });
+    props.onEdit(paths, ui());
+    exit();
+  };
+
+  const installSkill = () => {
+    const done = installSkills(ctx, props.selfCommand);
+    setMessage({
+      tone: done.length ? 'ok' : 'error',
+      text: done.length ? `✓ Added ${done.map((d) => `${d.invoke} to ${d.name}`).join(' and ')}.` : 'No supported agent found.',
+    });
+  };
+
+  const toggleSelect = (all = false) => {
+    if (focus === 'sidebar' || isCost) return;
+    setSelected((s) => {
+      if (all) return s.size === rows.length ? new Set() : new Set(rows.map((r) => r.key));
+      const n = new Set(s);
+      if (row) n.has(row.key) ? n.delete(row.key) : n.add(row.key);
+      return n;
+    });
+    if (!all) setCursor((c) => clamp(c + 1, 0, Math.max(0, rows.length - 1)));
+  };
+
+  const doRescan = () => void rescan().then(() => setMessage({ tone: 'ok', text: '✓ Rescanned.' }));
+
+  const commands: Command[] = [
+    { name: 'quit', aliases: ['q', 'q!', 'qa', 'wq', 'x'], title: 'Quit', run: () => exit() },
+    { name: 'rescan', aliases: ['r', 'scan', 'e!'], title: 'Rescan everything', run: doRescan },
+    { name: 'all', title: 'All findings', run: () => goEntry('cat:all') },
+    { name: 'checks', title: 'Contradiction checks', run: () => goEntry('view:checks') },
+    { name: 'cost', title: 'Token cost', run: () => goEntry('view:cost') },
+    { name: 'help', aliases: ['h'], title: 'Keys and commands', run: () => setOverlay({ kind: 'help' }) },
+    { name: 'undo', aliases: ['u'], title: 'Undo the last change', run: askUndo },
+    { name: 'delete', aliases: ['d'], title: 'Delete the selected rows', run: () => act('delete') },
+    { name: 'archive', aliases: ['a'], title: 'Archive the selected rows', run: () => act('archive') },
+    { name: 'move', aliases: ['m'], title: 'Move to the suggested project', run: () => act('move') },
+    { name: 'ignore', aliases: ['i'], title: 'Mark as not a problem', run: () => act('ignore') },
+    { name: 'edit', aliases: ['e'], title: 'Open in $EDITOR', run: edit },
+    { name: 'skill', aliases: ['install-skill'], title: 'Install the MindStash skill', run: installSkill },
+    { name: 'sidebar', title: 'Hide / show the sidebar', run: () => setSidebarHidden((h) => !h) },
+    { name: 'nohlsearch', aliases: ['noh'], title: 'Clear the search', run: () => setQuery('') },
+  ];
+
+  const findCommand = (word: string): Command | undefined => {
+    const exact = commands.find((c) => c.name === word || c.aliases?.includes(word));
+    if (exact) return exact;
+    const pre = commands.filter((c) => c.name.startsWith(word));
+    return pre.length === 1 ? pre[0] : undefined;
+  };
+
+  const runCommand = (text: string) => {
+    const [word = '', ...rest] = text.trim().split(/\s+/);
+    if (!word) return;
+    if (/^\d+$/.test(word)) return jump(Number(word) - 1); // :12 → row 12, like vim
+    const c = findCommand(word);
+    if (!c) return setMessage({ tone: 'error', text: `Not a command: ${word}  (:help lists them)` });
+    c.run(rest.join(' '));
+  };
+
+  const paletteItems = (q: string): PaletteItem[] => {
+    if (!result) return [];
+    const items: (PaletteItem & { score: number })[] = [];
+    const add = (label: string, hint: string, run: () => void, boost = 0) => {
+      const score = fuzzy(q, label);
+      if (score >= 0) items.push({ label, hint, run, score: score + boost });
     };
-    return n;
-  }, [result, stack, props.ctx]);
+    for (const c of commands) add(c.title, `:${c.name}`, () => c.run(), 5);
+    for (const e of entries) {
+      if (e.kind === 'category') add(`Go to ${e.label}`, `${e.count} findings`, () => goEntry(e.key), 3);
+      if (e.kind === 'view') add(`Go to ${e.label}`, 'view', () => goEntry(e.key), 3);
+      if (e.kind === 'scope') add(e.group.label, 'scope', () => goEntry(e.key));
+    }
+    if (q) {
+      const all = rowsFor(entries.find((e) => e.key === 'cat:all'), result, pairs, '');
+      all.forEach((r, i) =>
+        add(`${r.primary} — ${r.finding?.title ?? ''}`, r.tag, () => {
+          setEntryKey('cat:all');
+          setQuery('');
+          setSelected(new Set());
+          setCursor(i);
+          setFocus('main');
+        }),
+      );
+      for (const e of entries) {
+        if (e.kind !== 'scope') continue;
+        e.group.items.forEach((it) =>
+          add(it.name, `${it.kind} · ${e.group.label}`, () => {
+            setEntryKey(e.key);
+            setQuery('');
+            setSelected(new Set());
+            setCursor(Math.max(0, rowsFor(e, result, pairs, '').findIndex((r) => r.key === it.id)));
+            setFocus('main');
+          }, -2),
+        );
+      }
+    }
+    return items.sort((a, b) => b.score - a.score).slice(0, 10);
+  };
 
-  if (fatal) {
+  /* ---------------------------------------------------------------- keys */
+
+  useInput((input, key) => {
+    if (!result) return;
+    if (key.ctrl && input === 'c') return exit();
+
+    if (overlay) {
+      setMessage(undefined);
+      switch (overlay.kind) {
+        case 'confirm':
+          if (input === 'y' || key.return) {
+            const p = overlay.plan;
+            setOverlay(null);
+            try {
+              apply(ctx, p);
+            } catch (e) {
+              return setMessage({ tone: 'error', text: (e as Error).message });
+            }
+            setSelected(new Set());
+            if (focus === 'detail') setFocus('main');
+            const saved = p.tokensSaved ? ` · saved ~${fmt(p.tokensSaved)} tk/session` : '';
+            void rescan().then(() =>
+              setMessage({ tone: 'ok', text: `✓ ${plural(p.actions.length, 'change')} applied${saved} · u to undo` }),
+            );
+          } else if (input === 'n' || key.escape || input === 'q') setOverlay(null);
+          return;
+        case 'undo':
+          if (input === 'y' || key.return) {
+            setOverlay(null);
+            try {
+              undo(ctx);
+            } catch (e) {
+              return setMessage({ tone: 'error', text: (e as Error).message });
+            }
+            void rescan().then(() => setMessage({ tone: 'ok', text: '✓ Undone.' }));
+          } else if (input === 'n' || key.escape || input === 'q') setOverlay(null);
+          return;
+        case 'help':
+          if (key.escape || key.return || input === 'q' || input === '?') setOverlay(null);
+          return;
+        case 'welcome':
+          if (key.return) setOverlay(skillInstalled(ctx) ? null : { kind: 'skill' });
+          else if (input === 'q') exit();
+          return;
+        case 'skill':
+          if (input === 'y') {
+            setOverlay(null);
+            installSkill();
+          } else if (input === 'n' || key.escape || key.return) setOverlay(null);
+          return;
+        case 'palette': {
+          const items = paletteItems(overlay.query);
+          if (key.escape) setOverlay(null);
+          else if (key.return) {
+            setOverlay(null);
+            items[overlay.cursor]?.run();
+          } else if (key.downArrow || (key.ctrl && (input === 'n' || input === 'j'))) {
+            setOverlay({ ...overlay, cursor: clamp(overlay.cursor + 1, 0, Math.max(0, items.length - 1)) });
+          } else if (key.upArrow || (key.ctrl && (input === 'p' || input === 'k'))) {
+            setOverlay({ ...overlay, cursor: clamp(overlay.cursor - 1, 0, Math.max(0, items.length - 1)) });
+          } else if (key.backspace || key.delete) setOverlay({ ...overlay, query: overlay.query.slice(0, -1), cursor: 0 });
+          else if (input && !key.ctrl && !key.meta) setOverlay({ ...overlay, query: overlay.query + input, cursor: 0 });
+          return;
+        }
+      }
+    }
+
+    if (mode === 'SEARCH') {
+      if (key.escape) {
+        setQuery('');
+        setMode('NORMAL');
+      } else if (key.return) setMode('NORMAL');
+      else if (key.backspace || key.delete) {
+        if (!query) setMode('NORMAL');
+        setQuery((q) => q.slice(0, -1));
+      } else if (input && !key.ctrl && !key.meta) setQuery((q) => q + input);
+      setCursor(0);
+      return;
+    }
+
+    if (mode === 'COMMAND') {
+      if (key.escape) {
+        setCmd('');
+        setMode('NORMAL');
+      } else if (key.return) {
+        setMode('NORMAL');
+        setCmd('');
+        runCommand(cmd);
+      } else if (key.tab) {
+        const c = commands.find((x) => x.name.startsWith(cmd.trim()));
+        if (c) setCmd(c.name);
+      } else if (key.backspace || key.delete) {
+        if (!cmd) setMode('NORMAL');
+        setCmd((c) => c.slice(0, -1));
+      } else if (input && !key.ctrl && !key.meta) setCmd((c) => c + input);
+      return;
+    }
+
+    // NORMAL mode
+    setMessage(undefined);
+    if (key.ctrl && input === 'p') return setOverlay({ kind: 'palette', query: '', cursor: 0 });
+    const half = Math.max(1, Math.floor(bodyH / 2));
+    if (key.ctrl && input === 'd') return move(half);
+    if (key.ctrl && input === 'u') return move(-half);
+
+    const v = vim.current;
+    if (/^[1-9]$/.test(input) || (v.count && input === '0')) {
+      v.count += input;
+      return;
+    }
+    const n = Number(v.count || '1');
+    const counted = v.count !== '';
+    v.count = '';
+    if (input === 'g') {
+      if (v.g) {
+        v.g = false;
+        return jump(counted ? n - 1 : 'top');
+      }
+      v.g = true;
+      return;
+    }
+    v.g = false;
+
+    if (input === 'j' || key.downArrow) move(n);
+    else if (input === 'k' || key.upArrow) move(-n);
+    else if (key.pageDown) move(half * 2);
+    else if (key.pageUp) move(-half * 2);
+    else if (input === 'G') jump(counted ? n - 1 : 'bottom');
+    else if (input === 'h' || key.leftArrow) focusLeft();
+    else if (input === 'l' || key.rightArrow || key.return) focusRight();
+    else if (key.tab) setFocus((f) => (f === 'sidebar' ? 'main' : showSidebar ? 'sidebar' : 'main'));
+    else if (key.escape) {
+      if (focus === 'detail') setFocus('main');
+      else if (query) setQuery('');
+      else if (selected.size) setSelected(new Set());
+    } else if (input === '[') moveSidebar(-1);
+    else if (input === ']') moveSidebar(1);
+    else if (input === ' ' || input === 'x') toggleSelect();
+    else if (input === 'V') toggleSelect(true);
+    else if (input === 'd') act('delete');
+    else if (input === 'a') act('archive');
+    else if (input === 'm') act('move');
+    else if (input === 'i') act('ignore');
+    else if (input === 'e') edit();
+    else if (input === 'u') askUndo();
+    else if (input === '/') {
+      if (focus !== 'main') setFocus('main');
+      setQuery('');
+      setMode('SEARCH');
+    } else if (input === ':') setMode('COMMAND');
+    else if (input === '?') setOverlay({ kind: 'help' });
+    else if (input === 'r') doRescan();
+    else if (input === '\\') setSidebarHidden((h) => !h);
+    else if (input === 'q') exit();
+  });
+
+  /* ---------------------------------------------------------------- render */
+
+  if (fatal) return <Text color={theme.error}>{fatal}</Text>;
+  if (!result) {
     return (
-      <Box paddingX={1}>
-        <Text color="red">{fatal}</Text>
+      <Box width={cols} height={termRows} alignItems="center" justifyContent="center">
+        <Text color={theme.accent}>◆ MindStash · scanning memories and skills…</Text>
       </Box>
     );
   }
-  if (!nav) {
-    return (
-      <Box paddingX={1}>
-        <Text>Scanning memories and skills…</Text>
-      </Box>
-    );
+
+  const entryLabel =
+    entry?.kind === 'category' ? entry.label : entry?.kind === 'view' ? entry.label : entry?.kind === 'scope' ? entry.group.label : '';
+  const listTitle = `${entryLabel}${query ? `  /${query}` : ''}`;
+  const emptyText =
+    entry?.kind === 'view' && entry.id === 'checks'
+      ? '✓ No pairs waiting to be checked.'
+      : query
+        ? 'No matches.'
+        : entry?.kind === 'category'
+          ? '✓ Nothing needs attention here.'
+          : 'Empty.';
+
+  const statusMode: Mode = overlay && (overlay.kind === 'confirm' || overlay.kind === 'undo') ? 'CONFIRM' : mode;
+  const crumb = [entryLabel, rows.length && !isCost ? `${cur + 1}/${rows.length}` : '', focus === 'detail' ? 'detail' : '']
+    .filter(Boolean)
+    .join(' › ');
+  const hints =
+    focus === 'sidebar'
+      ? 'j/k move · l open · [ ] switch · ^p palette · : command · ? help'
+      : focus === 'detail'
+        ? 'j/k scroll · d delete · a archive · m move · i ignore · e edit · h back'
+        : 'space select · d delete · a archive · m move · i ignore · e edit · ⏎ open · / search';
+  const completion =
+    mode === 'COMMAND' && cmd.trim()
+      ? commands.filter((c) => c.name.startsWith(cmd.trim())).map((c) => c.name).slice(0, 6).join('  ')
+      : '';
+
+  let modal: ReactNode = null;
+  if (overlay) {
+    const mw2 = Math.min(76, cols - 4);
+    const inner = mw2 - 4;
+    const common = { cols, rows: termRows, width: mw2 };
+    if (overlay.kind === 'confirm') {
+      const p = overlay.plan;
+      modal = (
+        <Modal
+          {...common}
+          title={`Apply ${plural(p.actions.length, 'change')}?`}
+          color={theme.error}
+          lines={[
+            ...p.actions.slice(0, 12).map((a) => ({ text: describe(a) })),
+            ...(p.actions.length > 12 ? [{ text: `… and ${p.actions.length - 12} more`, dim: true }] : []),
+            { text: '' },
+            ...(p.tokensSaved ? [{ text: `Saves ~${fmt(p.tokensSaved)} tokens per session.`, color: theme.ok }] : []),
+            { text: 'A backup is saved first. Undo any time with u.', dim: true },
+          ]}
+          footer="y apply   n cancel"
+        />
+      );
+    } else if (overlay.kind === 'undo') {
+      modal = (
+        <Modal
+          {...common}
+          title="Undo last change?"
+          color={theme.warn}
+          lines={[
+            { text: new Date(overlay.op.at).toLocaleString(), dim: true },
+            ...overlay.op.summary.split('\n').slice(0, 12).map((t) => ({ text: t })),
+          ]}
+          footer="y undo   n cancel"
+        />
+      );
+    } else if (overlay.kind === 'help') {
+      modal = <Modal {...common} title="Keys" lines={helpLines()} footer="Esc close" />;
+    } else if (overlay.kind === 'palette') {
+      modal = (
+        <Modal
+          {...common}
+          title="Go to anything"
+          color={theme.accent2}
+          lines={paletteLines(paletteItems(overlay.query), overlay.query, overlay.cursor, inner)}
+          footer="⏎ run   ↑↓ move   Esc close"
+        />
+      );
+    } else if (overlay.kind === 'welcome') {
+      modal = (
+        <Modal
+          {...common}
+          title="Welcome to MindStash"
+          lines={[
+            { text: 'Looking for agents…', bold: true },
+            ...result.agents.map((a) => ({
+              text: `${a.found ? '✓' : '✗'} ${a.name.padEnd(13)} ${
+                a.found
+                  ? `${plural(a.projects, 'project')} · ${plural(a.memories, 'memory', 'memories')} · ${plural(a.skills, 'skill')}`
+                  : 'not found'
+              }`,
+              color: a.found ? theme.ok : theme.muted,
+            })),
+            { text: '' },
+            ...wrap('Nothing changes without asking you. Every fix is backed up and can be undone with u.', inner).map((t) => ({ text: t })),
+            { text: '' },
+            { text: 'Press ? any time for keys, Ctrl-P to jump anywhere.', dim: true },
+          ]}
+          footer="⏎ continue   q quit"
+        />
+      );
+    } else if (overlay.kind === 'skill') {
+      const agents = result.agents.filter((a) => a.found).map((a) => agentName(a.id));
+      modal = (
+        <Modal
+          {...common}
+          title="Use MindStash from your agent?"
+          lines={[
+            ...wrap(
+              `Add the MindStash skill to ${agents.join(' and ')} so you can review memories from chat (/mindstash in Claude Code, $mindstash in Codex).`,
+              inner,
+            ).map((t) => ({ text: t })),
+            { text: '' },
+            { text: 'One small file per agent; only its description loads per session.', dim: true },
+          ]}
+          footer="y add it   n not now"
+        />
+      );
+    }
   }
 
-  const screen = stack.at(-1)!;
+  const tokens = baselines(result).map((b) => ({ name: b.name === 'Claude Code' ? 'Claude' : b.name, tokens: b.tokens }));
+  const docTitle = isCost ? 'Token cost' : focus === 'detail' ? (row?.primary ?? 'Detail') : 'Preview';
+
   return (
-    <Box flexDirection="column">
-      {render(screen, nav)}
-      {toast ? (
-        <Box paddingX={1} marginTop={1}>
-          <Text color={toast.tone === 'ok' ? 'green' : toast.tone === 'error' ? 'red' : undefined}>{toast.text}</Text>
-          {toast.undo ? <Text dimColor> · [u] Undo</Text> : null}
+    <Box flexDirection="column" width={cols} height={termRows}>
+      <Box height={bodyH}>
+        {showSidebar ? (
+          <Sidebar entries={entries} cursor={entryIdx} focused={focus === 'sidebar'} width={sw} height={bodyH} />
+        ) : null}
+        <Box flexDirection="column" width={mw}>
+          {isCost || focus === 'detail' ? null : (
+            <List
+              title={listTitle}
+              rows={rows}
+              cursor={cur}
+              selected={selected}
+              focused={focus === 'main'}
+              width={mw}
+              height={listH}
+              empty={emptyText}
+            />
+          )}
+          <Doc
+            title={docTitle}
+            lines={docLines}
+            offset={focus === 'detail' || isCost ? offset : 0}
+            focused={focus === 'detail' || (isCost && focus === 'main')}
+            width={mw}
+            height={docHeight}
+          />
         </Box>
-      ) : null}
+      </Box>
+      <StatusLine mode={statusMode} crumb={crumb} selected={selected.size} tokens={tokens} width={cols} />
+      <CommandLine
+        mode={mode}
+        input={mode === 'COMMAND' ? cmd : query}
+        completion={completion}
+        message={message}
+        hints={hints}
+        width={cols}
+      />
+      {modal}
     </Box>
   );
 }
-
-function render(s: Screen, nav: Nav) {
-  // `key` resets screen state (cursor, scroll) when the screen changes.
-  switch (s.kind) {
-    case 'first':
-      return <FirstRun nav={nav} />;
-    case 'offer-skill':
-      return <OfferSkill nav={nav} />;
-    case 'home':
-      return <Home nav={nav} />;
-    case 'findings':
-      return <Findings key={'f' + s.category} nav={nav} category={s.category} />;
-    case 'detail':
-      return <Detail key={'d' + s.id} nav={nav} id={s.id} />;
-    case 'item':
-      return <ItemView key={'i' + s.id} nav={nav} id={s.id} />;
-    case 'confirm':
-      return <Confirm nav={nav} plan={s.plan} />;
-    case 'undo':
-      return <ConfirmUndo nav={nav} op={s.op} />;
-    case 'browse':
-      return <Browse nav={nav} />;
-    case 'cost':
-      return <Cost nav={nav} />;
-    case 'help':
-      return <Help nav={nav} />;
-  }
-}
-

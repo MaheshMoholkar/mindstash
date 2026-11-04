@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { adapters } from '../adapters/index.js';
 import type { AgentSummary, Finding, Item, Project, ScanContext, ScanResult } from './types.js';
-import { loadState, saveState, type State, type StoredFinding } from './state.js';
+import { loadState, saveState, type State, type StoredFinding, type StoredTarget } from './state.js';
 import type { RuleInput } from './rules/context.js';
 import { missingPath, missingProject, pastEvent } from './rules/stale.js';
 import { agentsTooLong, brokenLink, tooLong, unindexed } from './rules/index-rules.js';
@@ -90,22 +90,29 @@ function store(f: Finding, items: Map<string, Item>): StoredFinding {
     tokens: f.tokens,
     moveTo: f.moveTo,
     missingLink: f.missingLink,
-    targets: f.itemIds.map((id) => {
-      const i = items.get(id)!;
-      return {
-        itemId: i.id,
-        path: i.path,
-        hash: i.hash,
-        kind: i.kind,
-        name: i.name,
-        scope: i.scope.label,
-        projectKey: i.projectKey,
-        indexPath: i.indexPath,
-        loadTokens: i.loadTokens,
-        readOnly: i.readOnly,
-      };
-    }),
+    targets: f.itemIds.map((id) => target(items.get(id)!)),
   };
+}
+
+function target(i: Item): StoredTarget {
+  return {
+    itemId: i.id,
+    agent: i.agent,
+    path: i.path,
+    hash: i.hash,
+    kind: i.kind,
+    name: i.name,
+    scope: i.scope.label,
+    projectKey: i.projectKey,
+    indexPath: i.indexPath,
+    loadTokens: i.loadTokens,
+    readOnly: i.readOnly,
+  };
+}
+
+/** Items the user may delete or archive directly: their own memories and skills. */
+export function actionable(i: Item): boolean {
+  return !i.readOnly && (i.kind === 'memory' || i.kind === 'skill');
 }
 
 export interface ScanOptions {
@@ -145,7 +152,11 @@ export async function scan(ctx: ScanContext, opts: ScanOptions = {}): Promise<Sc
 
   if (opts.save !== false) {
     const byId = new Map(items.map((i) => [i.id, i]));
-    state.lastScan = { at: ctx.now.toISOString(), findings: all.map((f) => store(f, byId)) };
+    state.lastScan = {
+      at: ctx.now.toISOString(),
+      findings: all.map((f) => store(f, byId)),
+      items: items.filter(actionable).map(target),
+    };
     saveState(ctx.mindstashDir, state);
   }
 

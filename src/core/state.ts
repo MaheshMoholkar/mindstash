@@ -14,6 +14,7 @@ const Target = z.object({
   indexPath: z.string().optional(),
   loadTokens: z.number(),
   readOnly: z.boolean(),
+  agent: z.string().optional(),
 });
 
 const StoredFinding = z.object({
@@ -77,7 +78,14 @@ const StateSchema = z.object({
   version: z.literal(1),
   ignored: z.record(z.string(), z.object({ rule: z.string(), title: z.string(), at: z.string() })),
   deleted: z.array(Deleted),
-  lastScan: z.object({ at: z.string(), findings: z.array(StoredFinding) }).optional(),
+  lastScan: z
+    .object({
+      at: z.string(),
+      findings: z.array(StoredFinding),
+      /** Memories and skills the user can act on directly, by item id. */
+      items: z.array(Target).default([]),
+    })
+    .optional(),
   history: z.array(Operation),
   lastCheck: z.object({ at: z.string(), pairs: z.array(Pair) }).optional(),
   verdicts: z.record(z.string(), Verdict).default({}),

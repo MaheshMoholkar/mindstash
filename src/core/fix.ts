@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, relative } from 'node:path';
 import { Backup } from './backup.js';
 import { signature } from './minhash.js';
 import { loadState, saveState, type Operation, type StoredFinding, type StoredTarget } from './state.js';
@@ -13,6 +13,8 @@ export type Action =
   | { kind: 'archive'; findingId: string; target: StoredTarget; dest: string }
   | { kind: 'move'; findingId: string; target: StoredTarget; dest: string; destIndex: string; label: string }
   | { kind: 'unlink'; findingId: string; indexPath: string; file: string }
+  | { kind: 'delete-skill'; findingId: string; target: StoredTarget; dir: string; files: string[] }
+  | { kind: 'archive-skill'; findingId: string; target: StoredTarget; dir: string; files: string[]; dest: string }
   | { kind: 'ignore'; findingId: string; finding: StoredFinding };
 
 export interface Plan {
@@ -35,18 +37,37 @@ function removeIndexLine(indexPath: string, file: string): string[] {
 
 function uniqueDest(dir: string, file: string): string {
   let dest = join(dir, file);
-  for (let n = 2; existsSync(dest); n++) dest = join(dir, file.replace(/\.md$/, `-${n}.md`));
+  for (let n = 2; existsSync(dest); n++) dest = join(dir, file.endsWith('.md') ? file.replace(/\.md$/, `-${n}.md`) : `${file}-${n}`);
   return dest;
 }
 
+/** Every file under a folder (skills can carry references/, scripts/ …). */
+function filesUnder(dir: string): string[] {
+  const out: string[] = [];
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) out.push(...filesUnder(p));
+    else out.push(p);
+  }
+  return out;
+}
+
+function checkUnchanged(id: string, t: StoredTarget): void {
+  if (!existsSync(t.path)) throw new FixError(`${id}: ${t.path} no longer exists. Run \`mindstash scan\` again.`);
+  if (contentHash(readFileSync(t.path, 'utf8')) !== t.hash) {
+    throw new FixError(`${id}: ${basename(t.path)} changed since the last scan. Run \`mindstash scan\` again.`);
+  }
+}
+
 /**
- * Turn finding ids into concrete actions. Only ids from the latest scan are accepted,
- * so this can never touch an arbitrary file.
+ * Turn finding ids (or item ids, for acting on one memory or skill directly) into concrete
+ * actions. Only ids from the latest scan are accepted, so this can never touch an arbitrary file.
  */
 export function plan(ctx: ScanContext, requests: Requests): Plan {
   const state = loadState(ctx.mindstashDir);
   if (!state.lastScan) throw new FixError('No scan yet. Run `mindstash scan` first.');
   const byId = new Map(state.lastScan.findings.map((f) => [f.id, f]));
+  const itemsById = new Map(state.lastScan.items.map((t) => [t.itemId, t]));
   const actions: Action[] = [];
   const claimed = new Map<string, string>(); // path -> action kind
   let tokensSaved = 0;
@@ -59,10 +80,44 @@ export function plan(ctx: ScanContext, requests: Requests): Plan {
     return dup;
   };
 
+  /** One memory or skill, picked directly rather than through a finding. */
+  const itemAction = (kind: 'delete' | 'archive', id: string, t: StoredTarget) => {
+    checkUnchanged(id, t);
+    if (t.kind === 'memory') {
+      if (claim(t.path, kind, id)) return;
+      tokensSaved += t.loadTokens;
+      if (kind === 'delete') actions.push({ kind, findingId: id, target: t });
+      else {
+        const dir = join(ctx.mindstashDir, 'archive', t.agent ?? 'claude-code', t.projectKey ?? 'unknown');
+        actions.push({ kind, findingId: id, target: t, dest: uniqueDest(dir, basename(t.path)) });
+      }
+      return;
+    }
+    // A skill is its whole folder.
+    const dir = dirname(t.path);
+    if (lstatSync(dir).isSymbolicLink()) {
+      throw new FixError(`${id}: skill "${t.name}" is a link to another folder; remove it where it lives.`);
+    }
+    if (claim(dir, kind, id)) return;
+    tokensSaved += t.loadTokens;
+    const files = filesUnder(dir);
+    if (kind === 'delete') actions.push({ kind: 'delete-skill', findingId: id, target: t, dir, files });
+    else {
+      const root = join(ctx.mindstashDir, 'archive', t.agent ?? 'claude-code', 'skills');
+      actions.push({ kind: 'archive-skill', findingId: id, target: t, dir, files, dest: uniqueDest(root, basename(dir)) });
+    }
+  };
+
   for (const kind of ['delete', 'archive', 'move', 'ignore'] as const) {
     for (const id of requests[kind] ?? []) {
       const f = byId.get(id);
-      if (!f) throw new FixError(`Unknown finding id "${id}". Ids come from the latest \`mindstash scan\`.`);
+      const item = f ? undefined : itemsById.get(id);
+      if (item) {
+        if (kind !== 'delete' && kind !== 'archive') throw new FixError(`${id}: ${item.name} can only be deleted or archived directly.`);
+        itemAction(kind, id, item);
+        continue;
+      }
+      if (!f) throw new FixError(`Unknown id "${id}". Ids come from the latest \`mindstash scan\`.`);
       if (!f.fixes.includes(kind)) {
         throw new FixError(`${id} (${f.rule}) can't be fixed with ${kind}. Allowed: ${f.fixes.join(', ')}.`);
       }
@@ -78,10 +133,7 @@ export function plan(ctx: ScanContext, requests: Requests): Plan {
       }
       for (const t of f.targets) {
         if (t.readOnly || t.kind !== 'memory') throw new FixError(`${id}: ${t.name} is read-only for MindStash.`);
-        if (!existsSync(t.path)) throw new FixError(`${id}: ${t.path} no longer exists. Run \`mindstash scan\` again.`);
-        if (contentHash(readFileSync(t.path, 'utf8')) !== t.hash) {
-          throw new FixError(`${id}: ${basename(t.path)} changed since the last scan. Run \`mindstash scan\` again.`);
-        }
+        checkUnchanged(id, t);
         if (claim(t.path, kind, id)) continue;
         // A move still loads, just in the right place, so it saves nothing.
         if (kind !== 'move') tokensSaved += t.loadTokens;
@@ -113,6 +165,10 @@ export function describe(a: Action): string {
       return `✕ remove   index line for ${a.file}`;
     case 'ignore':
       return `○ ignore   ${a.finding.title}`;
+    case 'delete-skill':
+      return `✕ delete   skill ${a.target.name}   ${a.target.scope} (${a.files.length} file${a.files.length === 1 ? '' : 's'})`;
+    case 'archive-skill':
+      return `↓ archive  skill ${a.target.name}   ${a.target.scope}`;
   }
 }
 
@@ -124,6 +180,11 @@ export function apply(ctx: ScanContext, p: Plan): Operation {
     if (a.kind === 'ignore') continue;
     if (a.kind === 'unlink') {
       touched.push(a.indexPath);
+      continue;
+    }
+    if (a.kind === 'delete-skill' || a.kind === 'archive-skill') {
+      touched.push(...a.files);
+      if (a.kind === 'archive-skill') touched.push(...a.files.map((f) => join(a.dest, relative(a.dir, f))));
       continue;
     }
     touched.push(a.target.path);
@@ -150,6 +211,13 @@ export function apply(ctx: ScanContext, p: Plan): Operation {
         break;
       case 'unlink':
         removeIndexLine(a.indexPath, a.file);
+        break;
+      case 'delete-skill':
+        rmSync(a.dir, { recursive: true });
+        break;
+      case 'archive-skill':
+        mkdirSync(dirname(a.dest), { recursive: true });
+        renameSync(a.dir, a.dest);
         break;
       case 'delete': {
         // Keep a text-free fingerprint so a re-learned copy can be spotted later.
