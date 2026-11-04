@@ -123,7 +123,7 @@ export function Findings({ nav, category }: { nav: Nav; category: Category }) {
               </Box>
               <Text> </Text>
               <Box width={scopeW}>
-                {/* Keep the end of long paths: "…/vyavasay-v2" is the part that tells them apart. */}
+                {/* Keep the end of long paths: "…/api-server" is the part that tells them apart. */}
                 <Text dimColor wrap="truncate-start">
                   {scope}
                 </Text>
