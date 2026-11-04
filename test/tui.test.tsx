@@ -117,4 +117,20 @@ describe('full-screen UI', () => {
     await press('y');
     expect(existsSync(join(fx.claudeDir, 'skills', 'mindstash', 'SKILL.md'))).toBe(true);
   });
+
+  it('picks one file inside a multi-file finding and deletes just that one', async () => {
+    const gone = join(fx.home, 'old-project');
+    const first = fx.memory(gone, 'first-note.md', 'First note for the old project.');
+    const second = fx.memory(gone, 'second-note.md', 'Second note for the old project.');
+    const { press, frame } = await app();
+    await press('/', ...'2 memories', KEY.enter, 'l');
+    expect(frame()).toContain('j/k pick');
+    await press('j', 'd');
+    expect(frame()).toContain('Apply 1 change?');
+    expect(frame()).toContain('second-note');
+    await press('y');
+    await tick(200);
+    expect(existsSync(second)).toBe(false);
+    expect(existsSync(first)).toBe(true);
+  });
 });

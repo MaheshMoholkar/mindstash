@@ -1,7 +1,7 @@
 import { Box, Text, useApp, useInput } from 'ink';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { agentName } from '../adapters/index.js';
-import { costRows } from '../cli/format.js';
+import { costRows, itemsOf } from '../cli/format.js';
 import { installSkills, skillInstalled } from '../cli/skill.js';
 import { pending } from '../core/contradictions.js';
 import { baselines, cost } from '../core/cost.js';
@@ -58,6 +58,7 @@ export function App(props: AppProps) {
   const [focus, setFocus] = useState<Focus>(props.initialUi?.focus ?? 'main');
   const [cursor, setCursor] = useState(props.initialUi?.cursor ?? 0);
   const [offset, setOffset] = useState(0);
+  const [fileCursor, setFileCursor] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<'NORMAL' | 'SEARCH' | 'COMMAND'>('NORMAL');
   const [query, setQuery] = useState('');
@@ -116,11 +117,22 @@ export function App(props: AppProps) {
   }, [result, isCost]);
 
   const docLines = useMemo(
-    () => (result ? (isCost ? costLines : docFor(row, result, docW, focus === 'detail')) : []),
-    [result, row, docW, focus, isCost, costLines],
+    () => (result ? (isCost ? costLines : docFor(row, result, docW, focus === 'detail', fileCursor)) : []),
+    [result, row, docW, focus, isCost, costLines, fileCursor],
   );
   const docHeight = isCost || focus === 'detail' ? bodyH : bodyH - listH;
   const maxOffset = Math.max(0, docLines.length - (docHeight - 2));
+  // Files of a multi-file finding, when its detail is open (the file picker).
+  const pickFiles = focus === 'detail' && row?.finding && !row.item && result ? itemsOf(row.finding, result) : [];
+  const picking = pickFiles.length > 1;
+  const pickedFile = picking ? pickFiles[clamp(fileCursor, 0, pickFiles.length - 1)] : undefined;
+  // Keep the picked file in view.
+  useEffect(() => {
+    if (!picking) return;
+    const line = docLines.findIndex((l) => l.cursor);
+    const visible = docHeight - 2;
+    if (line >= 0 && (line < offset || line >= offset + visible - 1)) setOffset(clamp(line - 3, 0, maxOffset));
+  }, [fileCursor, picking]);
 
   // Keep the cursor valid when the list shrinks (after a fix, or while searching).
   useEffect(() => {
@@ -147,6 +159,7 @@ export function App(props: AppProps) {
 
   const move = (delta: number) => {
     if (focus === 'sidebar') return moveSidebar(delta);
+    if (picking) return setFileCursor((c) => clamp(c + delta, 0, pickFiles.length - 1));
     if (focus === 'detail' || isCost) return setOffset((o) => clamp(o + delta, 0, maxOffset));
     setCursor((c) => clamp(c + delta, 0, Math.max(0, rows.length - 1)));
     setOffset(0);
@@ -164,6 +177,7 @@ export function App(props: AppProps) {
     else if (focus === 'main' && row && !isCost) {
       setFocus('detail');
       setOffset(0);
+      setFileCursor(0);
     }
   };
   const focusLeft = () => {
@@ -184,6 +198,18 @@ export function App(props: AppProps) {
     focus === 'sidebar' ? [] : selected.size ? rows.filter((r) => selected.has(r.key)) : row ? [row] : [];
 
   const act = (kind: FixKind) => {
+    // In the file picker, delete / archive act on the picked file only.
+    if (pickedFile && (kind === 'delete' || kind === 'archive')) {
+      if (!actionable(pickedFile)) return setMessage({ tone: 'error', text: `${pickedFile.name}: ${editability(pickedFile)}.` });
+      try {
+        const p = plan(ctx, { [kind]: [pickedFile.id] } as Requests);
+        if (p.actions.length) setOverlay({ kind: 'confirm', plan: p });
+      } catch (e) {
+        if (e instanceof FixError) setMessage({ tone: 'error', text: e.message });
+        else throw e;
+      }
+      return;
+    }
     const rs = targets();
     if (!rs.length) return setMessage({ tone: 'info', text: 'Pick a row first (l to move into the list).' });
     const ids: string[] = [];
@@ -220,7 +246,7 @@ export function App(props: AppProps) {
   const edit = () => {
     if (!result) return;
     const picked = focus === 'sidebar' ? [] : selected.size ? rows.filter((r) => selected.has(r.key)) : row ? [row] : [];
-    const paths = [...new Set(picked.flatMap((r) => pathsOf(r, result)))];
+    const paths = pickedFile ? [pickedFile.path] : [...new Set(picked.flatMap((r) => pathsOf(r, result)))];
     if (!paths.length) return setMessage({ tone: 'info', text: 'Nothing to open here.' });
     props.onEdit(paths, ui());
     exit();
@@ -509,7 +535,9 @@ export function App(props: AppProps) {
     focus === 'sidebar'
       ? 'j/k move · l open · [ ] switch · ^p palette · : command · ? help'
       : focus === 'detail'
-        ? 'j/k scroll · d delete · a archive · m move · i ignore · e edit · h back'
+        ? picking
+          ? 'j/k pick file · d delete it · a archive it · e edit it · i ignore finding · h back (d in list = all files)'
+          : 'j/k scroll · d delete · a archive · m move · i ignore · e edit · h back'
         : 'space select · d delete · a archive · m move · i ignore · e edit · ⏎ open · / search';
   const completion =
     mode === 'COMMAND' && cmd.trim()

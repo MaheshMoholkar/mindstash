@@ -43,7 +43,7 @@ function itemBlock(i: Item, width: number, maxLines: number): Line[] {
  * Everything worth showing about a row, as lines. The preview shows the top of it; the
  * detail view scrolls through all of it.
  */
-export function docFor(row: Row | undefined, r: ScanResult, width: number, full: boolean): Line[] {
+export function docFor(row: Row | undefined, r: ScanResult, width: number, full: boolean, fileCursor = 0): Line[] {
   if (!row) return [{ text: 'Nothing selected.', dim: true }];
   const per = full ? 400 : 8;
 
@@ -97,10 +97,26 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
   }
 
   const items = row.item ? [row.item] : f ? itemsOf(f, r) : [];
+  if (items.length > 1 && full) {
+    // File picker: j/k choose a file, d / a / e act on just that one.
+    const at = Math.min(fileCursor, items.length - 1);
+    out.push(section(`${items.length} files · j/k pick · d a e act on the picked one`));
+    items.forEach((i, n) =>
+      out.push({
+        text: `${n === at ? '▌' : ' '} ${i.name}${i.readOnly ? '  (read-only)' : ''}`,
+        color: n === at ? theme.accent : theme.fg,
+        bold: n === at,
+        bg: n === at ? '#292e42' : undefined,
+        cursor: n === at,
+      }),
+    );
+    out.push(blank, section(`Picked file ${at + 1} of ${items.length}`), ...itemBlock(items[at]!, width, 12));
+    return out;
+  }
   if (items.length > 3) {
     out.push(section(`${items.length} files`));
-    for (const i of items.slice(0, full ? items.length : 6)) out.push({ text: `• ${i.name}`, color: theme.fg });
-    if (!full && items.length > 6) out.push({ text: `… ${items.length - 6} more (Enter to open)`, dim: true });
+    for (const i of items.slice(0, 6)) out.push({ text: `• ${i.name}`, color: theme.fg });
+    if (items.length > 6) out.push({ text: `… ${items.length - 6} more (Enter to pick one)`, dim: true });
     return out;
   }
   items.forEach((i, n) => {

@@ -122,6 +122,9 @@ export interface Line {
   dim?: boolean;
   /** Quote gutter, for file content. */
   gutter?: boolean;
+  /** The picked file in a multi-file finding (kept in view while scrolling). */
+  cursor?: boolean;
+  bg?: string;
 }
 
 export function Lines({ lines, width }: { lines: Line[]; width: number }) {
@@ -130,7 +133,7 @@ export function Lines({ lines, width }: { lines: Line[]; width: number }) {
       {lines.map((l, i) => (
         <Text key={i} wrap="truncate-end">
           {l.gutter ? <Text color={theme.border}>│ </Text> : null}
-          <Text color={l.color ?? (l.dim ? theme.muted : theme.fg)} bold={l.bold}>
+          <Text color={l.color ?? (l.dim ? theme.muted : theme.fg)} bold={l.bold} backgroundColor={l.bg}>
             {fit(l.text, l.gutter ? width - 2 : width).trimEnd() || ' '}
           </Text>
         </Text>
