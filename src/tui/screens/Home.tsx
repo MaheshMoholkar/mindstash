@@ -1,6 +1,6 @@
 import { Box, Text, useInput } from 'ink';
 import { useState } from 'react';
-import { CATEGORIES } from '../../cli/format.js';
+import { baselineLine, CATEGORIES } from '../../cli/format.js';
 import { plural } from '../../core/text.js';
 import type { Nav } from '../types.js';
 import { fmt, Header, Hints, useSize } from '../ui.js';
@@ -26,7 +26,7 @@ export function FirstRun({ nav }: { nav: Nav }) {
           </Text>
         </Text>
       ))}
-      <Text dimColor>{'  '}Codex, Gemini CLI and Cursor support is coming.</Text>
+      <Text dimColor>{'  '}Gemini CLI and Cursor support is coming.</Text>
       <Text> </Text>
       <Text>Nothing will be changed without asking you.</Text>
       <Text>Fixes are backed up and can be undone.</Text>
@@ -47,8 +47,8 @@ export function OfferSkill({ nav }: { nav: Nav }) {
     <Box flexDirection="column" paddingX={1}>
       <Text bold>MindStash</Text>
       <Text> </Text>
-      <Text>Add /mindstash to Claude Code so you can use it from inside your agent?</Text>
-      <Text dimColor>It installs one skill file in ~/.claude/skills/mindstash. Only its short description loads per session.</Text>
+      <Text>Add the MindStash skill to your agents ({nav.result.agents.filter((a) => a.found).map((a) => a.name).join(', ')}) so you can use it from chat?</Text>
+      <Text dimColor>One skill file per agent (/mindstash in Claude Code, $mindstash in Codex). Only its short description loads per session.</Text>
       <Hints keys={[['y', 'Yes, add it'], ['n', 'Not now']]} />
     </Box>
   );
@@ -75,9 +75,6 @@ export function Home({ nav }: { nav: Nav }) {
 
   const memories = r.items.filter((i) => i.kind === 'memory').length;
   const skills = r.items.filter((i) => i.kind === 'skill').length;
-  const baseline = r.items
-    .filter((i) => (i.kind === 'skill' || i.kind === 'instructions') && i.scope.kind === 'global')
-    .reduce((s, i) => s + i.loadTokens, 0);
   const flagged = new Set(r.findings.flatMap((f) => f.itemIds));
   const fine = r.items.filter((i) => i.kind === 'memory' && !flagged.has(i.id)).length;
   const agents = r.agents.filter((a) => a.found).map((a) => a.name).join(' · ');
@@ -87,8 +84,9 @@ export function Home({ nav }: { nav: Nav }) {
     <Box flexDirection="column" paddingX={1}>
       <Header title="MindStash" right={agents} />
       <Text>
-        {plural(memories, 'memory', 'memories')} · {plural(skills, 'skill')} · ~{fmt(baseline)} tokens load in every session
+        {plural(memories, 'memory', 'memories')} · {plural(skills, 'skill')}
       </Text>
+      <Text dimColor>Tokens loaded in every session: {baselineLine(r)}</Text>
       <Text> </Text>
       {cats.length === 0 ? (
         <Text color="green">✓ Nothing needs attention.</Text>

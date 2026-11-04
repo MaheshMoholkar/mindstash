@@ -1,6 +1,12 @@
 import type { Finding, Item } from '../types.js';
 import { comparable, signature, similarity } from '../minhash.js';
-import { findingId, sumLoad, type Rule } from './context.js';
+import { findingId, memoryFixes, sumLoad, type Rule } from './context.js';
+
+function byAgent(items: Item[]): Item[][] {
+  const m = new Map<string, Item[]>();
+  for (const i of items) m.set(i.agent, [...(m.get(i.agent) ?? []), i]);
+  return [...m.values()];
+}
 
 export const MEMORY_SIMILAR = 0.45;
 export const SKILL_OVERLAP = 0.5;
@@ -26,11 +32,11 @@ function pairs(items: Item[], threshold: number): { a: Item; b: Item; score: num
 export const similarMemories: Rule = ({ items, projectOf }) => {
   // Memories of a vanished project are already flagged; comparing them only adds noise.
   const mems = items.filter((i) => i.kind === 'memory' && projectOf(i)?.exists !== false);
-  return pairs(mems, MEMORY_SIMILAR).map(({ a, b, score }) => {
+  return byAgent(mems).flatMap((group) => pairs(group, MEMORY_SIMILAR)).map(({ a, b, score }) => {
     const pct = Math.round(score * 100);
     const sameScope = a.scope.label === b.scope.label;
     return {
-      id: findingId('similar', [a.path, b.path]),
+      id: findingId('similar', [a.id, b.id]),
       rule: 'similar',
       category: 'similar',
       confidence: 'medium',
@@ -48,8 +54,11 @@ export const similarMemories: Rule = ({ items, projectOf }) => {
 };
 
 /** Skills installed twice, or whose descriptions would trigger on the same requests. */
-export const skillOverlap: Rule = ({ items }) => {
-  const skills = items.filter((i) => i.kind === 'skill');
+export const skillOverlap: Rule = ({ items }) =>
+  // Each agent loads only its own skills, so compare within one agent.
+  byAgent(items.filter((i) => i.kind === 'skill')).flatMap(overlapWithin);
+
+function overlapWithin(skills: Item[]): Finding[] {
   const out: Finding[] = [];
   const bare = (s: Item) => s.name.split(':').pop()!.toLowerCase();
 
@@ -60,7 +69,7 @@ export const skillOverlap: Rule = ({ items }) => {
     // or a global copy plus a project copy, compete in the same session.
     if (group.length < 2 || !group.some((s) => s.scope.kind === 'global')) continue;
     out.push({
-      id: findingId('skill-duplicate', group.map((s) => s.path)),
+      id: findingId('skill-duplicate', group.map((s) => s.id)),
       rule: 'skill-duplicate',
       category: 'similar',
       confidence: 'high',
@@ -82,7 +91,7 @@ export const skillOverlap: Rule = ({ items }) => {
     if (a.source && a.source === b.source && a.source.startsWith('plugin:')) continue;
     const pct = Math.round(score * 100);
     out.push({
-      id: findingId('skill-overlap', [a.path, b.path]),
+      id: findingId('skill-overlap', [a.id, b.id]),
       rule: 'skill-overlap',
       category: 'similar',
       confidence: 'medium',
@@ -97,7 +106,7 @@ export const skillOverlap: Rule = ({ items }) => {
     });
   }
   return out;
-};
+}
 
 /** A memory the user deleted that the agent saved again. */
 export const relearned: Rule = ({ items, state }) => {
@@ -114,7 +123,7 @@ export const relearned: Rule = ({ items, state }) => {
     }
     if (!best) continue;
     out.push({
-      id: findingId('relearned', [m.path, best.d.at]),
+      id: findingId('relearned', [m.id, best.d.at]),
       rule: 'relearned',
       category: 'relearned',
       confidence: 'medium',
@@ -126,7 +135,7 @@ export const relearned: Rule = ({ items, state }) => {
       ],
       itemIds: [m.id],
       tokens: m.loadTokens,
-      fixes: ['delete', 'archive', 'ignore'],
+      fixes: memoryFixes([m]),
     });
   }
   return out;

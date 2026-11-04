@@ -1,12 +1,10 @@
 import { Box, Text, useApp } from 'ink';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { scan } from '../core/scan.js';
 import { apply, FixError, plan, undo, type Plan, type Requests } from '../core/fix.js';
 import { loadState } from '../core/state.js';
 import type { ScanContext, ScanResult } from '../core/types.js';
-import { skillMarkdown } from '../cli/skill.js';
+import { installSkills, skillInstalled } from '../cli/skill.js';
 import type { Nav, Screen, Toast } from './types.js';
 import { fmt } from './ui.js';
 import { FirstRun, Home, OfferSkill } from './screens/Home.js';
@@ -64,7 +62,7 @@ export function App(props: AppProps) {
         setToast(null);
         setStack([s]);
       },
-      skillInstalled: () => existsSync(join(props.ctx.claudeDir, 'skills', 'mindstash', 'SKILL.md')),
+      skillInstalled: () => skillInstalled(props.ctx),
       toast: setToast,
       quit: () => exit(),
       act(req: Requests) {
@@ -114,10 +112,8 @@ export function App(props: AppProps) {
         exit();
       },
       installSkill() {
-        const dir = join(props.ctx.claudeDir, 'skills', 'mindstash');
-        mkdirSync(dir, { recursive: true });
-        writeFileSync(join(dir, 'SKILL.md'), skillMarkdown(props.selfCommand));
-        setToast({ tone: 'ok', text: '✓ Added /mindstash to Claude Code.' });
+        const done = installSkills(props.ctx, props.selfCommand);
+        setToast({ tone: 'ok', text: `✓ Added ${done.map((d) => `${d.invoke} to ${d.name}`).join(' and ')}.` });
       },
       common(input, key) {
         if (key.escape) pop();

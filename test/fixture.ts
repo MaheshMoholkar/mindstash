@@ -11,6 +11,7 @@ export class Fixture {
   readonly root: string;
   readonly home: string;
   readonly claudeDir: string;
+  readonly codexDir: string;
   readonly mindstashDir: string;
 
   constructor() {
@@ -18,13 +19,14 @@ export class Fixture {
     this.root = realpathSync(mkdtempSync(join(tmpdir(), 'mindstash-test-')));
     this.home = join(this.root, 'home');
     this.claudeDir = join(this.home, '.claude');
+    this.codexDir = join(this.home, '.codex');
     this.mindstashDir = join(this.home, '.mindstash');
     mkdirSync(join(this.claudeDir, 'projects'), { recursive: true });
     RepoIndex.clearCache();
   }
 
   ctx(now = new Date('2026-11-04T12:00:00')): ScanContext {
-    return { home: this.home, claudeDir: this.claudeDir, mindstashDir: this.mindstashDir, now };
+    return { home: this.home, claudeDir: this.claudeDir, codexDir: this.codexDir, mindstashDir: this.mindstashDir, now };
   }
 
   write(path: string, content: string, mtime?: Date): string {

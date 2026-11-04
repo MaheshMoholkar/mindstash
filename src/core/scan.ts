@@ -5,7 +5,7 @@ import type { AgentSummary, Finding, Item, Project, ScanContext, ScanResult } fr
 import { loadState, saveState, type State, type StoredFinding } from './state.js';
 import type { RuleInput } from './rules/context.js';
 import { missingPath, missingProject, pastEvent } from './rules/stale.js';
-import { brokenLink, tooLong, unindexed } from './rules/index-rules.js';
+import { agentsTooLong, brokenLink, tooLong, unindexed } from './rules/index-rules.js';
 import { wrongScope } from './rules/scope.js';
 import { relearned, similarMemories, skillOverlap } from './rules/similar.js';
 
@@ -20,13 +20,19 @@ export const RULES = [
   tooLong,
   brokenLink,
   unindexed,
+  agentsTooLong,
 ];
+
+/** Codex memory files are generated; MindStash points at how to change them instead. */
+const CODEX_HINT =
+  'Codex rebuilds this file from its sessions, so MindStash leaves it alone. Change it from Codex (/memories), or edit it and expect Codex may rewrite it.';
 
 export function defaultContext(overrides: Partial<ScanContext> = {}): ScanContext {
   const home = overrides.home ?? process.env.HOME ?? homedir();
   return {
     home,
     claudeDir: process.env.CLAUDE_CONFIG_DIR ?? join(home, '.claude'),
+    codexDir: process.env.CODEX_HOME ?? join(home, '.codex'),
     mindstashDir: process.env.MINDSTASH_HOME ?? join(home, '.mindstash'),
     now: new Date(),
     ...overrides,
@@ -58,6 +64,8 @@ export function runRules(ctx: ScanContext, projects: Project[], items: Item[], s
     for (const f of rule(input)) {
       if (seen.has(f.id) || vanished(f)) continue;
       seen.add(f.id);
+      const its = f.itemIds.map((id) => items_.get(id));
+      if (its.some((i) => i?.agent === 'codex' && (i.kind === 'memory' || i.kind === 'index'))) f.reasons.push(CODEX_HINT);
       findings.push(f);
     }
   }

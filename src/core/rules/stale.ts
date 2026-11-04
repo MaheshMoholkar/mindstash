@@ -15,18 +15,18 @@ export const missingProject: Rule = ({ projects, items }) => {
     const mems = items.filter((i) => i.projectKey === p.key && i.kind === 'memory');
     if (mems.length === 0) continue;
     out.push({
-      id: findingId('missing-project', mems.map((m) => m.path)),
+      id: findingId('missing-project', mems.map((m) => m.id)),
       rule: 'missing-project',
       category: 'stale',
       confidence: 'high',
       title: `${plural(mems.length, 'memory', 'memories')} for a project folder that no longer exists`,
       reasons: [
         `The project folder ${p.path} was not found on disk (moved, renamed or deleted).`,
-        `These memories only load when Claude Code is started in that folder.`,
+        `These memories only apply to sessions started in that folder.`,
       ],
       itemIds: mems.map((m) => m.id),
       tokens: sumLoad(mems),
-      fixes: ['delete', 'archive', 'ignore'],
+      fixes: memoryFixes(mems),
     });
   }
   return out;
@@ -106,7 +106,7 @@ export const missingPath: Rule = ({ ctx, items, projectOf }) => {
     if (unique.length === 0) continue;
 
     out.push({
-      id: findingId('missing-path', [item.path]),
+      id: findingId('missing-path', [item.id]),
       rule: 'missing-path',
       category: 'stale',
       confidence: 'high',
@@ -212,7 +212,7 @@ export const pastEvent: Rule = ({ ctx, items, projectOf }) => {
     if (hits.length === 0) continue;
     const ago = (d: number) => (d === 1 ? 'yesterday' : `${d} days ago`);
     out.push({
-      id: findingId('past-event', [item.path]),
+      id: findingId('past-event', [item.id]),
       rule: 'past-event',
       category: 'stale',
       confidence: 'medium',

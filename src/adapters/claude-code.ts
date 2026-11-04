@@ -1,38 +1,16 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import type { Adapter, AdapterScan, Item, Project, ScanContext, Scope } from '../core/types.js';
-import { contentHash, parseFrontmatter, sanitizePath, shortHash, str, tildify, tokens } from '../core/text.js';
+import type { Adapter, AdapterScan, Item, Project, ScanContext } from '../core/types.js';
+import { contentHash, parseFrontmatter, sanitizePath, str, tokens } from '../core/text.js';
+import { instructionItem as instr, isDir, itemId as id, listDirs, modifiedOf, readSkills as skills, readText, scopeFor } from './common.js';
 
 const AGENT = 'claude-code';
+const itemId = (path: string) => id(AGENT, path);
+const readSkills = (...a: Parameters<typeof skills> extends [string, ...infer R] ? R : never) => skills(AGENT, ...a);
+const instructionItem = (path: string, scope: Parameters<typeof instr>[2]) => instr(AGENT, path, scope);
 
 /** Claude Code loads only the first 200 lines of MEMORY.md. */
 export const INDEX_LOAD_LINES = 200;
-
-function isDir(p: string): boolean {
-  try {
-    return statSync(p).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-function readText(p: string): string | undefined {
-  try {
-    return readFileSync(p, 'utf8');
-  } catch {
-    return undefined;
-  }
-}
-
-function listDirs(p: string): string[] {
-  try {
-    return readdirSync(p, { withFileTypes: true })
-      .filter((e) => e.isDirectory() || (e.isSymbolicLink() && isDir(join(p, e.name))))
-      .map((e) => e.name);
-  } catch {
-    return [];
-  }
-}
 
 /**
  * Turn a sanitized folder name back into a path by walking the filesystem.
@@ -86,60 +64,6 @@ export function indexLinks(indexRaw: string): Map<string, string> {
   return out;
 }
 
-function itemId(path: string): string {
-  return shortHash(AGENT + ':' + path, 10);
-}
-
-function modifiedOf(path: string, data: Record<string, unknown>): Date {
-  const meta = data.metadata as Record<string, unknown> | undefined;
-  const fm = str(meta?.modified) ?? str(data.modified);
-  if (fm) {
-    const d = new Date(fm);
-    if (!Number.isNaN(d.getTime())) return d;
-  }
-  try {
-    return statSync(path).mtime;
-  } catch {
-    return new Date(0);
-  }
-}
-
-function scopeFor(dir: string | undefined, ctx: ScanContext): Scope {
-  if (!dir) return { kind: 'global', label: 'global' };
-  return { kind: 'project', dir, label: tildify(dir, ctx.home) };
-}
-
-function readSkills(skillsDir: string, scope: Scope, source: string, readOnly: boolean, prefix = ''): Item[] {
-  const items: Item[] = [];
-  for (const name of listDirs(skillsDir)) {
-    const path = join(skillsDir, name, 'SKILL.md');
-    const raw = readText(path);
-    if (raw === undefined) continue;
-    const { data, body } = parseFrontmatter(raw);
-    const skillName = prefix + (str(data.name) ?? name);
-    const description = str(data.description) ?? '';
-    items.push({
-      id: itemId(path),
-      agent: AGENT,
-      kind: 'skill',
-      name: skillName,
-      description,
-      path,
-      scope,
-      body,
-      raw,
-      hash: contentHash(raw),
-      modified: modifiedOf(path, {}),
-      // Only "name: description" sits in every session; the body loads when the skill is used.
-      loadTokens: tokens(`${skillName}: ${description}`),
-      sizeTokens: tokens(raw),
-      readOnly,
-      source,
-    });
-  }
-  return items;
-}
-
 function pluginSkillDirs(ctx: ScanContext): { dir: string; plugin: string }[] {
   const raw = readText(join(ctx.claudeDir, 'plugins', 'installed_plugins.json'));
   if (!raw) return [];
@@ -157,26 +81,6 @@ function pluginSkillDirs(ctx: ScanContext): { dir: string; plugin: string }[] {
 }
 
 const INSTRUCTION_FILES = ['CLAUDE.md', 'CLAUDE.local.md', join('.claude', 'CLAUDE.md')];
-
-function instructionItem(path: string, scope: Scope): Item | undefined {
-  const raw = readText(path);
-  if (raw === undefined) return undefined;
-  return {
-    id: itemId(path),
-    agent: AGENT,
-    kind: 'instructions',
-    name: basename(path),
-    path,
-    scope,
-    body: raw,
-    raw,
-    hash: contentHash(raw),
-    modified: modifiedOf(path, {}),
-    loadTokens: tokens(raw),
-    sizeTokens: tokens(raw),
-    readOnly: true,
-  };
-}
 
 export const claudeCode: Adapter = {
   id: AGENT,
@@ -223,7 +127,7 @@ export const claudeCode: Adapter = {
           body: indexRaw,
           raw: indexRaw,
           hash: contentHash(indexRaw),
-          modified: modifiedOf(indexPath, {}),
+          modified: modifiedOf(indexPath),
           loadTokens: tokens(lines.slice(0, INDEX_LOAD_LINES).join('\n')),
           sizeTokens: tokens(indexRaw),
           readOnly: false,

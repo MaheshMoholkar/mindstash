@@ -10,7 +10,7 @@ import { loadState } from '../core/state.js';
 import { tildify } from '../core/text.js';
 import type { Finding, ScanResult } from '../core/types.js';
 import { costReport, itemsOf, scanReport, showFinding } from './format.js';
-import { skillMarkdown } from './skill.js';
+import { installSkills, skillInstalled } from './skill.js';
 
 const VERSION = '0.1.0';
 
@@ -19,6 +19,7 @@ function findingJson(f: Finding, r: ScanResult, withBody = false) {
     ...f,
     items: itemsOf(f, r).map((i) => ({
       id: i.id,
+      agent: i.agent,
       kind: i.kind,
       name: i.name,
       description: i.description,
@@ -97,8 +98,8 @@ async function runScan(opts: { json?: boolean; full?: boolean; includeIgnored?: 
     );
   } else {
     console.log(scanReport(r, { full: opts.full }));
-    if (process.stdout.isTTY && !existsSync(join(ctx.claudeDir, 'skills', 'mindstash', 'SKILL.md'))) {
-      console.log(chalk.dim(' Tip: `mindstash install-skill` adds /mindstash to Claude Code.'));
+    if (process.stdout.isTTY && !skillInstalled(ctx)) {
+      console.log(chalk.dim(' Tip: `mindstash install-skill` adds the MindStash skill to your agents.'));
     }
   }
 }
@@ -218,16 +219,18 @@ program
 
 program
   .command('install-skill')
-  .description('add /mindstash to Claude Code so you can use it from inside your agent')
+  .description('add the MindStash skill to Claude Code (/mindstash) and Codex ($mindstash)')
   .action(() => {
     const ctx = defaultContext();
-    const dir = join(ctx.claudeDir, 'skills', 'mindstash');
-    mkdirSync(dir, { recursive: true });
-    const path = join(dir, 'SKILL.md');
-    const existed = existsSync(path);
-    writeFileSync(path, skillMarkdown(selfCommand()));
-    console.log(chalk.green(` ✓ ${existed ? 'Updated' : 'Installed'} ${tildify(path, ctx.home)}`));
-    console.log(chalk.dim(' Type /mindstash in Claude Code to review memories from chat.'));
+    const done = installSkills(ctx, selfCommand());
+    if (!done.length) {
+      console.error('No supported agent found (looked for ~/.claude and ~/.codex).');
+      process.exitCode = 1;
+      return;
+    }
+    for (const d of done) {
+      console.log(chalk.green(` ✓ ${d.existed ? 'Updated' : 'Installed'} ${tildify(d.path, ctx.home)}`) + chalk.dim(`  (${d.invoke} in ${d.name})`));
+    }
   });
 
 program.parseAsync().catch((e: Error) => {

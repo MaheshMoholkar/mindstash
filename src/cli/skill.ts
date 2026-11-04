@@ -1,13 +1,46 @@
-/** The /mindstash skill: lets the user's own agent run MindStash and talk through findings in chat. */
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import type { ScanContext } from '../core/types.js';
+
+/** Where each agent reads user skills from. */
+export function skillTargets(ctx: ScanContext): { agent: string; name: string; path: string; invoke: string }[] {
+  const out = [];
+  if (existsSync(ctx.claudeDir)) {
+    out.push({ agent: 'claude-code', name: 'Claude Code', path: join(ctx.claudeDir, 'skills', 'mindstash', 'SKILL.md'), invoke: '/mindstash' });
+  }
+  if (existsSync(ctx.codexDir)) {
+    out.push({ agent: 'codex', name: 'Codex', path: join(ctx.home, '.agents', 'skills', 'mindstash', 'SKILL.md'), invoke: '$mindstash' });
+  }
+  return out;
+}
+
+export function skillInstalled(ctx: ScanContext): boolean {
+  const t = skillTargets(ctx);
+  return t.length > 0 && t.every((x) => existsSync(x.path));
+}
+
+/** Write the skill for every detected agent. Returns what was written. */
+export function installSkills(ctx: ScanContext, cmd: string) {
+  const written = [];
+  for (const t of skillTargets(ctx)) {
+    const existed = existsSync(t.path);
+    mkdirSync(join(t.path, '..'), { recursive: true });
+    writeFileSync(t.path, skillMarkdown(cmd));
+    written.push({ ...t, existed });
+  }
+  return written;
+}
+
+/** The MindStash skill: lets the user's own agent run MindStash and talk through findings in chat. */
 export function skillMarkdown(cmd: string): string {
   return `---
 name: mindstash
-description: Review and clean up Claude Code's saved memories and skills (stale, wrong scope, duplicates, re-learned, oversized MEMORY.md) with MindStash. Use when the user types /mindstash or asks to audit, clean up or check their agent's memories or skills.
+description: Review and clean up saved agent memories and skills (Claude Code, Codex) with MindStash - stale, wrong scope, duplicates, re-learned, oversized index or AGENTS.md. Use when the user invokes mindstash or asks to audit, clean up or check their agent's memories or skills.
 ---
 
 # MindStash
 
-MindStash scans this machine's agent memories and skills and flags what looks wrong.
+MindStash scans this machine's agent memories and skills (Claude Code and Codex) and flags what looks wrong.
 Run it with: \`${cmd}\`
 
 ## Steps
@@ -26,6 +59,7 @@ Run it with: \`${cmd}\`
 - Never apply a fix the user didn't approve in this conversation.
 - Never merge or rewrite what a memory says. For duplicates, offer to open both files so the user can edit them.
 - Only use finding ids from the latest scan; \`apply\` refuses anything else.
+- Codex memories are read-only for MindStash (Codex regenerates them). For those, explain the finding and suggest the user changes it from Codex (\`/memories\`) or edits the file.
 - You may suggest a scan when you notice something off mid-task, but never scan or fix on your own.
 `;
 }

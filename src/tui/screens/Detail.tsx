@@ -1,6 +1,7 @@
 import { Box, Text, useInput } from 'ink';
 import { useState } from 'react';
 import { itemsOf } from '../../cli/format.js';
+import { agentName } from '../../adapters/index.js';
 import { describe } from '../../core/fix.js';
 import type { FixKind, Item } from '../../core/types.js';
 import type { Nav } from '../types.js';
@@ -56,7 +57,7 @@ export function Detail({ nav, id }: { nav: Nav; id: string }) {
     <Box flexDirection="column" paddingX={1}>
       <Header
         title={sideBySide ? `${RULE_LABEL[f.rule]}` : first?.name ?? f.title}
-        right={first ? `${first.scope.label} · Claude Code` : undefined}
+        right={first ? `${first.scope.label} · ${agentName(first.agent)}` : undefined}
       />
       <Text>
         <Text color={CONFIDENCE_COLOR[f.confidence]}>● </Text>
@@ -163,7 +164,7 @@ export function ItemView({ nav, id }: { nav: Nav; id: string }) {
   if (!it) return <Text dimColor> Not found.</Text>;
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Header title={it.name} right={`${it.kind} · ${it.scope.label}`} />
+      <Header title={it.name} right={`${it.kind} · ${it.scope.label} · ${agentName(it.agent)}`} />
       {it.description ? <Text dimColor>{it.description}</Text> : null}
       <Text color="green">✓ Nothing flagged</Text>
       <Text>

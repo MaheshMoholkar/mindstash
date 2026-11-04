@@ -21,6 +21,8 @@ export interface Project {
   /** Where the agent keeps this project's memory files, if anywhere. */
   memoryDir?: string;
   indexPath?: string;
+  /** Instruction files a session here loads, in order (Codex AGENTS.md chain). */
+  instructionChain?: string[];
 }
 
 export interface Item {
@@ -91,6 +93,7 @@ export interface Finding {
 export interface ScanContext {
   home: string;
   claudeDir: string;
+  codexDir: string;
   mindstashDir: string;
   now: Date;
 }

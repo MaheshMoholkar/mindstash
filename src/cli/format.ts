@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import type { CostReport } from '../core/cost.js';
+import { baselines, type CostReport } from '../core/cost.js';
 import type { Category, Finding, Item, ScanResult } from '../core/types.js';
 import { clip, plural } from '../core/text.js';
 
@@ -8,7 +8,7 @@ export const CATEGORIES: { id: Category; label: string; hint: string }[] = [
   { id: 'scope', label: 'Wrong scope', hint: 'about one project, saved in a parent folder' },
   { id: 'similar', label: 'Look similar', hint: 'possible duplicates, overlapping skills' },
   { id: 'relearned', label: 'Re-learned', hint: 'deleted before, saved again' },
-  { id: 'index', label: 'Index problems', hint: 'MEMORY.md too long or out of sync' },
+  { id: 'index', label: 'Index problems', hint: 'index or AGENTS.md too long, out of sync' },
 ];
 
 const n = (x: number) => x.toLocaleString('en-US');
@@ -51,10 +51,8 @@ export function scanReport(r: ScanResult, opts: { full?: boolean; perCategory?: 
 
   const memories = r.items.filter((i) => i.kind === 'memory').length;
   const skills = r.items.filter((i) => i.kind === 'skill').length;
-  const baseline = r.items
-    .filter((i) => (i.kind === 'skill' || i.kind === 'instructions') && i.scope.kind === 'global')
-    .reduce((s, i) => s + i.loadTokens, 0);
-  out.push(` ${plural(memories, 'memory', 'memories')} · ${plural(skills, 'skill')} · ~${n(baseline)} tokens load in every session`);
+  out.push(` ${plural(memories, 'memory', 'memories')} · ${plural(skills, 'skill')}`);
+  out.push(chalk.dim(` Tokens loaded in every session: ${baselineLine(r)}`));
   out.push('');
 
   if (!r.agents.some((a) => a.found)) {
@@ -137,29 +135,56 @@ export function showFinding(f: Finding, r: ScanResult): string {
   return out.join('\n');
 }
 
-export function costReport(c: CostReport, limit = 15): string {
-  const out: string[] = [];
-  out.push(` ${chalk.bold('Token cost')} ${chalk.dim('(estimated, ~4 characters per token)')}`);
-  out.push(' ' + rule());
-  out.push(` Every session loads ~${n(c.baseline.total)} tokens:`);
-  out.push(`   ${n(c.baseline.skills).padStart(7)}  ${plural(c.baseline.skillCount, 'skill description')}`);
-  for (const s of c.bySource) out.push(chalk.dim(`   ${n(s.tokens).padStart(7)}    ${s.source} (${s.skills})`));
-  out.push(`   ${n(c.baseline.globalInstructions).padStart(7)}  global CLAUDE.md`);
-  out.push('');
-  out.push(` ${chalk.bold('Per project')} ${chalk.dim('(baseline + CLAUDE.md files + MEMORY.md + project skills)')}`);
-  for (const p of c.projects.slice(0, limit)) {
-    const extra = [
-      p.instructions && `CLAUDE.md ${n(p.instructions)}`,
-      p.index && `MEMORY.md ${n(p.index)}`,
-      p.projectSkills && `skills ${n(p.projectSkills)}`,
-    ]
-      .filter(Boolean)
-      .join(' · ');
-    const label = clip(p.label, 34).padEnd(34);
-    out.push(`   ${p.exists ? label : chalk.dim(label)} ${n(p.total).padStart(7)}  ${chalk.dim(extra)}`);
+/** One line of the cost view, shared by the CLI and the terminal UI. */
+export interface CostRow {
+  text: string;
+  style?: 'bold' | 'dim';
+  /** Project rows: scrolled as a list in the terminal UI. */
+  project?: boolean;
+}
+
+const INSTR_NAME: Record<string, string> = { 'claude-code': 'CLAUDE.md', codex: 'AGENTS.md' };
+
+export function costRows(c: CostReport, limit = Infinity): CostRow[] {
+  const rows: CostRow[] = [];
+  for (const a of c.agents) {
+    const instr = INSTR_NAME[a.agent] ?? 'instructions';
+    rows.push({ text: `${a.name}: every session loads ~${n(a.baseline.total)} tokens`, style: 'bold' });
+    rows.push({ text: `  ${n(a.baseline.skills).padStart(7)}  ${plural(a.baseline.skillCount, 'skill description')}` });
+    for (const s of a.bySource) rows.push({ text: `  ${n(s.tokens).padStart(9)}  ${s.source} (${s.skills})`, style: 'dim' });
+    rows.push({ text: `  ${n(a.baseline.globalInstructions).padStart(7)}  global ${instr}` });
+    if (a.baseline.memory) rows.push({ text: `  ${n(a.baseline.memory).padStart(7)}  memory summary (estimated)` });
+    if (a.projects.length) {
+      rows.push({ text: `  Per project (baseline + ${instr} files${a.agent === 'claude-code' ? ' + MEMORY.md' : ''} + project skills)`, style: 'dim' });
+      for (const p of a.projects.slice(0, limit)) {
+        const extra = [
+          p.instructions && `${instr} ${n(p.instructions)}`,
+          p.index && `MEMORY.md ${n(p.index)}`,
+          p.projectSkills && `skills ${n(p.projectSkills)}`,
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        rows.push({ text: `  ${clip(p.label, 34).padEnd(34)} ${n(p.total).padStart(7)}  ${extra}`, project: true });
+      }
+      if (a.projects.length > limit) rows.push({ text: `  … ${a.projects.length - limit} more (--all)`, style: 'dim' });
+    }
+    rows.push({ text: '' });
   }
-  if (c.projects.length > limit) out.push(chalk.dim(`   … ${c.projects.length - limit} more (--all)`));
-  out.push('');
-  out.push(` Flagged items cost ~${n(c.flaggedTokens)} tokens per session.`);
+  rows.push({ text: `Flagged items cost ~${n(c.flaggedTokens)} tokens per session.` });
+  return rows;
+}
+
+export function costReport(c: CostReport, limit = 15): string {
+  const out = [` ${chalk.bold('Token cost')} ${chalk.dim('(estimated, ~4 characters per token)')}`, ' ' + rule()];
+  for (const r of costRows(c, limit)) {
+    out.push(' ' + (r.style === 'bold' ? chalk.bold(r.text) : r.style === 'dim' ? chalk.dim(r.text) : r.text));
+  }
   return out.join('\n');
+}
+
+/** "Claude Code ~14,540 · Codex ~3,200": what each agent loads in every session. */
+export function baselineLine(r: ScanResult): string {
+  return baselines(r)
+    .map((b) => `${b.name} ~${n(b.tokens)}`)
+    .join(' · ');
 }

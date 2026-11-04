@@ -13,7 +13,8 @@ function escape(s: string): string {
  */
 export const wrongScope: Rule = ({ ctx, projects, items }) => {
   const out: Finding[] = [];
-  const live = projects.filter((p) => p.exists);
+  // Moving files between scopes is a Claude Code fix; Codex keeps one generated store.
+  const live = projects.filter((p) => p.exists && p.agent === 'claude-code');
 
   for (const parent of live) {
     const children = live.filter((c) => c.path.startsWith(parent.path + '/'));
@@ -49,7 +50,7 @@ export const wrongScope: Rule = ({ ctx, projects, items }) => {
       const memoryDir = target.memoryDir ?? join(ctx.claudeDir, 'projects', sanitizePath(target.path), 'memory');
       const targetLabel = tildify(target.path, ctx.home);
       out.push({
-        id: findingId('wrong-scope', [m.path, target.path]),
+        id: findingId('wrong-scope', [m.id, target.path]),
         rule: 'wrong-scope',
         category: 'scope',
         confidence: 'medium',

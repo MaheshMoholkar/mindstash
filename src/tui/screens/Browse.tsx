@@ -1,6 +1,7 @@
 import { Box, Text, useInput } from 'ink';
 import { useMemo, useState } from 'react';
-import { CATEGORIES } from '../../cli/format.js';
+import { CATEGORIES, costRows } from '../../cli/format.js';
+import { agentName } from '../../adapters/index.js';
 import { cost } from '../../core/cost.js';
 import type { Finding, Item, ScanResult } from '../../core/types.js';
 import type { Nav } from '../types.js';
@@ -18,27 +19,32 @@ interface Group {
 
 export function groupsOf(r: ScanResult): Group[] {
   const sum = (xs: Item[]) => xs.reduce((n, i) => n + i.loadTokens, 0);
-  const global = r.items.filter((i) => i.scope.kind === 'global');
-  const groups: Group[] = [
-    {
-      key: 'global',
-      label: 'Global (Claude Code)',
+  const groups: Group[] = [];
+  const multi = r.agents.filter((a) => a.found).length > 1;
+  for (const agent of r.agents.filter((a) => a.found)) {
+    const global = r.items.filter((i) => i.agent === agent.id && i.scope.kind === 'global');
+    groups.push({
+      key: `global:${agent.id}`,
+      label: `Global (${agentName(agent.id)})`,
       items: [...global].sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name)),
-      memories: 0,
+      memories: global.filter((i) => i.kind === 'memory').length,
       skills: global.filter((i) => i.kind === 'skill').length,
       tokens: sum(global),
       gone: false,
-    },
-  ];
-  for (const p of [...r.projects].sort((a, b) => a.path.localeCompare(b.path))) {
+    });
+  }
+  for (const p of [...r.projects].sort((a, b) => a.path.localeCompare(b.path) || a.agent.localeCompare(b.agent))) {
     const items = r.items.filter(
-      (i) => i.projectKey === p.key || (i.kind === 'skill' && i.scope.kind === 'project' && i.scope.dir === p.path),
+      (i) =>
+        i.agent === p.agent &&
+        (i.projectKey === p.key || (i.kind === 'skill' && i.scope.kind === 'project' && i.scope.dir === p.path)),
     );
     const mems = items.filter((i) => i.kind === 'memory');
     if (!mems.length && !items.some((i) => i.kind === 'skill')) continue;
+    const label = items[0]?.scope.label ?? p.path;
     groups.push({
       key: p.key,
-      label: items[0]?.scope.label ?? p.path,
+      label: multi && p.agent !== 'claude-code' ? `${agentName(p.agent)} · ${label}` : label,
       items: items.filter((i) => i.kind !== 'index').sort((a, b) => a.name.localeCompare(b.name)),
       memories: mems.length,
       skills: items.filter((i) => i.kind === 'skill').length,
@@ -174,48 +180,25 @@ export function Browse({ nav }: { nav: Nav }) {
 
 export function Cost({ nav }: { nav: Nav }) {
   const { rows } = useSize();
-  const c = useMemo(() => cost(nav.result, nav.ctx.home), [nav.result]);
+  const lines = useMemo(() => costRows(cost(nav.result, nav.ctx.home)), [nav.result]);
+  const h = Math.max(5, rows - 6);
   const [offset, setOffset] = useState(0);
   useInput((input, key) => {
-    if (input === 'j' || key.downArrow) setOffset((o) => Math.min(Math.max(0, c.projects.length - 1), o + 1));
+    if (input === 'j' || key.downArrow) setOffset((o) => Math.min(Math.max(0, lines.length - h), o + 1));
     else if (input === 'k' || key.upArrow) setOffset((o) => Math.max(0, o - 1));
+    else if (key.pageDown) setOffset((o) => Math.min(Math.max(0, lines.length - h), o + h));
+    else if (key.pageUp) setOffset((o) => Math.max(0, o - h));
     else nav.common(input, key);
   });
-  const h = Math.max(3, rows - 14 - c.bySource.length);
-  const shown = c.projects.slice(offset, offset + h);
   return (
     <Box flexDirection="column" paddingX={1}>
       <Header title="Token cost" right="estimated, ~4 characters per token" />
-      <Text>Every session loads ~{fmt(c.baseline.total)} tokens:</Text>
-      <Text>
-        {fmt(c.baseline.skills).padStart(9)}  {c.baseline.skillCount} skill descriptions
-      </Text>
-      {c.bySource.map((s) => (
-        <Text key={s.source} dimColor>
-          {fmt(s.tokens).padStart(11)}  {s.source} ({s.skills})
+      {lines.slice(offset, offset + h).map((l, i) => (
+        <Text key={i} bold={l.style === 'bold'} dimColor={l.style === 'dim'} wrap="truncate-end">
+          {l.text || ' '}
         </Text>
       ))}
-      <Text>{fmt(c.baseline.globalInstructions).padStart(9)}  global CLAUDE.md</Text>
-      <Text> </Text>
-      <Text bold>
-        Per project <Text dimColor>baseline + CLAUDE.md + MEMORY.md + project skills</Text>
-      </Text>
-      {shown.map((p) => (
-        <Box key={p.path}>
-          <Box width={34}>
-            <Text wrap="truncate-end">{p.label}</Text>
-          </Box>
-          <Text>{fmt(p.total).padStart(8)}  </Text>
-          <Text dimColor wrap="truncate-end">
-            {[p.instructions && `CLAUDE.md ${fmt(p.instructions)}`, p.index && `MEMORY.md ${fmt(p.index)}`, p.projectSkills && `skills ${fmt(p.projectSkills)}`]
-              .filter(Boolean)
-              .join(' · ')}
-          </Text>
-        </Box>
-      ))}
-      <Scrollbar start={offset} end={offset + shown.length} count={c.projects.length} />
-      <Text> </Text>
-      <Text>Flagged items cost ~{fmt(c.flaggedTokens)} tokens per session.</Text>
+      <Scrollbar start={offset} end={Math.min(lines.length, offset + h)} count={lines.length} />
       <Hints keys={[['j/k', 'Scroll'], ['Esc', 'Back']]} />
     </Box>
   );

@@ -127,7 +127,7 @@ describe('terminal UI', () => {
     expect(frame()).toContain('Looking for agents');
     expect(frame()).toContain('Claude Code');
     await press(KEY.enter);
-    expect(frame()).toContain('Add /mindstash to Claude Code');
+    expect(frame()).toContain('Add the MindStash skill to your agents (Claude Code)');
     await press('y');
     expect(existsSync(join(fx.claudeDir, 'skills', 'mindstash', 'SKILL.md'))).toBe(true);
     expect(frame()).toContain('Needs attention');
