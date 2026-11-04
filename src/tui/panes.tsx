@@ -92,15 +92,16 @@ export function List({
   empty: string;
 }) {
   const inner = width - 4;
-  const scopeW = Math.min(30, Math.floor(inner / 3));
+  const scopeW = Math.min(48, Math.floor(inner * 0.44));
   const nameW = inner - scopeW - 1;
+  const numberW = String(rows.length).length;
   const pos = rows.length ? `${cursor + 1}/${rows.length}` : '0';
   const { start, end } = windowOf(rows.length, cursor, height - 3);
 
   return (
     <Panel title={title} right={pos} width={width} height={height} focused={focused}>
       <Text color={theme.muted} bold>
-        {fit('  NAME', nameW)} {fit('SCOPE', scopeW)}
+        {'  '}{fit('#', numberW, 'right')} {fit('NAME', nameW - numberW - 3)} {fit('SCOPE', scopeW)}
       </Text>
       {rows.length === 0 ? <Text color={theme.muted}>{fit(empty, inner)}</Text> : null}
       {rows.slice(start, end).map((row, i) => {
@@ -108,7 +109,7 @@ export function List({
         const sel = selected.has(row.key) || Boolean(row.folder?.children.every((c) => selected.has(c.key)));
         const bg = on ? (focused ? theme.cursor : theme.cursorDim) : sel ? theme.picked : undefined;
         const prefix = row.folder ? (row.folder.collapsed ? '▸ ' : '▾ ') : row.depth ? '  ' : '';
-        const nameWidth = nameW - prefix.length - 2;
+        const nameWidth = nameW - numberW - prefix.length - 3;
         const project = row.folder?.label ?? row.group?.label
           ?? (row.finding?.rule === 'missing-project' && !row.item ? row.secondary : undefined);
         const path = project && (project.startsWith('~/') || isAbsolute(project)) ? project : '';
@@ -117,6 +118,9 @@ export function List({
         return (
           <Text key={row.key} backgroundColor={bg}>
             <Text color={theme.cursorFg} backgroundColor={bg}>{on ? '▌' : ' '}{sel ? '✓' : ' '}</Text>
+            <Text color={on ? theme.cursorInfo : theme.muted} backgroundColor={bg}>
+              {fit(String(start + i + 1), numberW, 'right')}{' '}
+            </Text>
             <Text color={on ? theme.cursorFg : row.folder ? theme.accent : theme.fg} backgroundColor={bg} bold={on || Boolean(row.folder)}>
               {prefix}{fit(name, nameWidth)}
             </Text>

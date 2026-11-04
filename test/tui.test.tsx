@@ -53,6 +53,7 @@ describe('full-screen UI', () => {
     expect(f).toContain('Preview');
     expect(f).toContain('NORMAL');
     expect(f).toMatch(/╭─ Stale /);
+    expect(f).toMatch(/# +NAME +SCOPE/);
     expect(f).toContain('old-api');
     expect(f).toContain('which no longer exists');
     expect(f).not.toContain('TYPE');
@@ -140,7 +141,7 @@ describe('full-screen UI', () => {
     const second = fx.memory(gone, 'second-note.md', 'Second note for the old project.');
     const { press, frame } = await app();
     await press('/', ...'old-project', KEY.enter);
-    expect(frame()).toContain('Project folder is missing');
+    expect(frame()).toMatch(/project missing +high confidence/);
     expect(frame()).toMatch(/old-project +~ +│/);
     expect(frame()).not.toContain('2 memories');
     expect(frame()).toContain('first-note');
@@ -153,11 +154,14 @@ describe('full-screen UI', () => {
     expect(frame()).toContain('~/old-project');
     expect(frame()).not.toMatch(/project gone|WHY FLAGGED|was not found on disk/);
     expect(frame()).toContain('j/k pick');
+    expect(frame()).toMatch(/FILES[\s\S]+CONTENTS[\s\S]+First note for the old project/);
     expect(frame()).toMatch(/first-note +d delete/);
     expect(frame()).not.toMatch(/second-note +d delete/);
+    const actionColumn = frame().split('\n').find((line) => line.includes('d delete'))?.indexOf('d delete');
     await press('j');
     expect(frame()).toMatch(/second-note +d delete/);
     expect(frame().match(/d delete/g)).toHaveLength(1);
+    expect(frame().split('\n').find((line) => line.includes('d delete'))?.indexOf('d delete')).toBe(actionColumn);
     await press('d');
     expect(frame()).toContain('Apply 1 change?');
     expect(frame()).toContain('second-note');
@@ -188,15 +192,15 @@ describe('full-screen UI', () => {
     const { press, frame } = await app();
     expect(frame()).toContain('▸');
     // Move the cursor onto the ~/mono folder, then open it.
-    for (let i = 0; i < 10 && !frame().split('\n').some((l) => /▌ ▸ mono +~ +│/.test(l)); i++) await press('j');
-    expect(frame()).toMatch(/▌ ▸ mono +~ +│/);
+    for (let i = 0; i < 10 && !/▌ +\d+ ▸ mono +~ +│/.test(frame()); i++) await press('j');
+    expect(frame()).toMatch(/▌ +\d+ ▸ mono +~ +│/);
     expect(frame()).toContain('22 FINDINGS');
     await press(KEY.enter);
     expect(frame()).toContain('▾');
-    expect(frame()).toMatch(/│ {5}n10 +│/);
+    expect(frame()).toMatch(/│ +3 {3}n10 +│/);
     await press('z', 'M');
-    expect(frame()).not.toMatch(/│ {5}n10 +│/);
+    expect(frame()).not.toMatch(/│ +3 {3}n10 +│/);
     await press(KEY.ctrlP, ...'n0', KEY.enter);
-    expect(frame()).toMatch(/▌ +n0 +│/);
+    expect(frame()).toMatch(/▌ +\d+ {3}n0 +│/);
   });
 });

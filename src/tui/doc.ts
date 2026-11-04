@@ -3,6 +3,7 @@ import { itemsOf } from '../cli/format.js';
 import { actionable } from '../core/scan.js';
 import type { Item, ScanResult } from '../core/types.js';
 import type { Row } from './data.js';
+import { RULE_LABEL } from './data.js';
 import { CATEGORY_COLOR, theme } from './theme.js';
 import { fit, fmt, pill, wrap, type Line } from './ui.js';
 
@@ -156,7 +157,17 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
     const title = missingProject
       ? 'Project folder is missing'
       : (full || f.title === row.primary ? firstReason : f.title) ?? f.title;
-    out.push(...wrap(title, width).map((text) => ({ text, bold: true, color })));
+    if (!full) {
+      const confidenceColor = { high: theme.error, medium: theme.warn, low: theme.muted }[f.confidence];
+      const issue = pill(missingProject ? 'project missing' : RULE_LABEL[f.rule] ?? f.rule, color);
+      const confidence = pill(`${f.confidence} confidence`, confidenceColor);
+      if (issue.text.length + confidence.text.length + 1 <= width) {
+        out.push({ text: '', segs: [issue, { text: ' ' }, confidence] });
+      } else {
+        out.push({ text: '', segs: [issue] }, { text: '', segs: [confidence] });
+      }
+    }
+    if (full || !missingProject) out.push(...wrap(title, width).map((text) => ({ text, bold: true, color })));
     if (missingProject && (full || row.item) && items[0]) {
       out.push(...wrap(items[0].scope.label, width).map((text) => ({ text, color: theme.info })));
     }
@@ -167,10 +178,15 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
     if (items.length) out.push(blank);
   }
   if (!full) {
+    if (f && items.length > 1) out.push(section('Files', width));
     out.push(...items.slice(0, 6).filter((item) => item.name !== row.primary).map(itemHeading));
     if (row.item && !f) out.push({ text: row.item.kind, dim: true });
     if (items.length > 6) out.push({ text: `… ${items.length - 6} more files`, dim: true });
-    if (items.length === 1) out.push(...itemExcerpt(items[0]!, width, 3));
+    if (items.length === 1) {
+      const excerpt = itemExcerpt(items[0]!, width, 3);
+      if (f && excerpt.length) out.push(section('Excerpt', width));
+      out.push(...excerpt);
+    }
     if (items.length > 1) out.push(blank, { text: 'Enter to pick a file', color: theme.info });
     if (row.item && !f) out.push(blank, { text: '✓ Nothing flagged', color: theme.ok });
     return out;
@@ -179,23 +195,25 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
   if (items.length > 1) {
     // File picker: j/k choose a file, d / a / e act on just that one.
     const at = Math.min(fileCursor, items.length - 1);
+    const actionWidth = 'read-only'.length;
+    const nameWidth = width - actionWidth - 4;
     out.push(section('Files', width));
     items.forEach((i, n) => {
       const on = n === at;
-      const hint = on && actionable(i) ? '  d delete' : i.readOnly ? '  read-only' : '';
+      const hint = on && actionable(i) ? 'd delete' : i.readOnly ? 'read-only' : '';
       out.push({
         text: i.name,
         cursor: on,
         bg: on ? theme.cursor : undefined,
         segs: [
           { text: on ? '▌ ' : '  ', color: theme.accent },
-          { text: fit(i.name, width - 2 - hint.length).trimEnd(), color: on ? theme.cursorFg : theme.fg, bold: on },
-          { text: hint, color: on ? theme.cursorInfo : theme.muted },
+          { text: fit(i.name, nameWidth), color: on ? theme.cursorFg : theme.fg, bold: on },
+          { text: `  ${fit(hint, actionWidth)}`, color: on ? theme.cursorInfo : theme.muted },
         ],
       });
     });
     const excerpt = itemExcerpt(items[at]!, width, 12);
-    if (excerpt.length) out.push(blank, ...excerpt);
+    if (excerpt.length) out.push(blank, section('Contents', width), ...excerpt);
     return out;
   }
   if (items[0]) out.push(...itemBlock(items[0], width, items[0].name !== row.primary));

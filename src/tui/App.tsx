@@ -154,10 +154,11 @@ export function App(props: AppProps) {
   const bodyH = termRows - 3;
   // Wide terminals: list and preview side by side (three columns). Narrow: stacked.
   const threeCol = mw >= 90;
-  const listW = threeCol ? Math.floor(mw * 0.56) : mw;
-  const prevW = threeCol ? mw - listW : mw;
-  const listH = threeCol ? bodyH : Math.max(6, Math.floor(bodyH * 0.45));
   const zoomed = focus === 'detail' || isCost;
+  const previewGap = zoomed ? 0 : threeCol ? 2 : 1;
+  const listW = threeCol ? Math.floor(mw * 0.56) : mw;
+  const prevW = threeCol ? mw - listW - previewGap : mw;
+  const listH = threeCol ? bodyH : Math.max(6, Math.floor(bodyH * 0.45));
   const docW = (zoomed ? mw : prevW) - 4;
 
   const costLines: Line[] = useMemo(() => {
@@ -174,7 +175,7 @@ export function App(props: AppProps) {
     () => (result ? (isCost ? costLines : docFor(row, result, docW, focus === 'detail', fileCursor)) : []),
     [result, row, docW, focus, isCost, costLines, fileCursor],
   );
-  const docHeight = zoomed || threeCol ? bodyH : bodyH - listH;
+  const docHeight = zoomed || threeCol ? bodyH : bodyH - listH - previewGap;
   const maxOffset = Math.max(0, docLines.length - (docHeight - 2));
   // Files of a multi-file finding, when its detail is open (the file picker).
   const pickFiles = focus === 'detail' && row?.finding && !row.item && result ? itemsOf(row.finding, result) : [];
@@ -901,7 +902,7 @@ export function App(props: AppProps) {
             about={entries[entryIdx] ? ENTRY_HELP[entries[entryIdx]!.key] : undefined}
           />
         ) : null}
-        <Box flexDirection={threeCol && !zoomed ? 'row' : 'column'} width={mw}>
+        <Box flexDirection={threeCol && !zoomed ? 'row' : 'column'} width={mw} gap={previewGap}>
           {zoomed ? null : (
             <List
               title={listTitle}
