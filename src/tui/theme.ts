@@ -4,12 +4,14 @@ export const theme = {
   accent2: '#bb9af7',
   fg: '#c0caf5',
   muted: '#9aa5ce',
-  border: '#414868',
+  border: '#565f89',
+  rule: '#3b4261',
   ok: '#9ece6a',
   warn: '#e0af68',
   error: '#f7768e',
   info: '#7dcfff',
   ink: '#1a1b26', // text on coloured pills
+  hilite: '#283457',
 } as const;
 
 export const CONFIDENCE = { high: theme.error, medium: theme.warn, low: theme.muted } as const;
