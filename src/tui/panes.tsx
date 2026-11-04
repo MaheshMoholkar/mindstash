@@ -161,11 +161,10 @@ export function List({
               {/^[~/]/.test(row.secondary) ? fitStart(row.secondary, secW) : fit(row.secondary, secW)}
             </Text>
             <Text backgroundColor={bg}>{' '.repeat(Math.max(1, tagW - tag.length - 1))}</Text>
-            {row.tag === '✓' ? (
-              <Text color={theme.ok} backgroundColor={bg}>{' ✓ '}</Text>
-            ) : (
-              <Text color={theme.ink} backgroundColor={tagColor} bold>{` ${tag} `}</Text>
-            )}
+            {/* Plain coloured text: a column of filled pills reads as one solid block. */}
+            <Text color={row.tag === '✓' ? theme.ok : tagColor} backgroundColor={bg} bold={on}>
+              {`${row.tag === '✓' ? '✓' : tag}  `}
+            </Text>
           </Text>
         );
       })}
