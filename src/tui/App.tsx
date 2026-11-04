@@ -5,11 +5,12 @@ import { costRows, itemsOf } from '../cli/format.js';
 import { installSkills, skillInstalled } from '../cli/skill.js';
 import { pending } from '../core/contradictions.js';
 import { baselines, cost } from '../core/cost.js';
-import { apply, describe, FixError, plan, undo, type Requests } from '../core/fix.js';
-import { actionable, scan } from '../core/scan.js';
-import { loadState, type Pair } from '../core/state.js';
+import { apply, describe, FixError, moveTargetFor, plan, undo, type Requests } from '../core/fix.js';
+import { actionable, scanSnapshot } from '../core/scan.js';
+import { loadState, saveState, type Pair } from '../core/state.js';
+import { loadCache, type ScanSnapshot } from '../core/cache.js';
 import { markSeen } from '../core/notify.js';
-import { plural } from '../core/text.js';
+import { plural, tildify } from '../core/text.js';
 import type { FixKind, ScanContext, ScanResult } from '../core/types.js';
 import { ENTRY_HELP, pathsOf, rowsFor, scopeEntries, selectable, sidebarEntries, treeRows, type Entry, type Row } from './data.js';
 import { docFor, editability } from './doc.js';
@@ -29,6 +30,7 @@ export interface AppProps {
   onEdit(paths: string[], ui: Ui): void;
   /** Tests pass a result to skip the real scan. */
   initialResult?: ScanResult;
+  refresh?(): Promise<ScanSnapshot>;
 }
 
 interface Command {
@@ -37,6 +39,12 @@ interface Command {
   title: string;
   run(arg?: string): void;
 }
+
+const TOUR = [
+  { title: 'Browse project folders', text: 'Use j and k to move. Press Enter on a project folder to see its findings, or l to open the selected item’s detail.' },
+  { title: 'Jump with Ctrl-P', text: 'Press Ctrl-P and type part of a project, item, view, or command name. Use the arrow keys to choose and Enter to open it.' },
+  { title: 'Undo with u', text: 'Review the list of files before confirming a fix. Press u and confirm to undo your last change.' },
+];
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 
@@ -53,8 +61,14 @@ export function App(props: AppProps) {
   const { cols, rows: termRows } = useSize();
   const { ctx } = props;
 
-  const [result, setResult] = useState<ScanResult | null>(props.initialResult ?? null);
-  const [pairs, setPairs] = useState<Pair[]>(() => (props.initialResult ? pendingPairs(ctx, props.initialResult) : []));
+  // Draw the last scan instantly; the real scan refreshes it right after the first frame.
+  const [first] = useState(() => props.initialResult
+    ? { result: props.initialResult, pairs: pendingPairs(ctx, props.initialResult) }
+    : loadCache(ctx));
+  const [result, setResult] = useState<ScanResult | null>(first?.result ?? null);
+  const [refreshing, setRefreshing] = useState(!props.initialResult);
+  const [fresh, setFresh] = useState(Boolean(props.initialResult));
+  const [pairs, setPairs] = useState<Pair[]>(first?.pairs ?? []);
   const [entryKey, setEntryKey] = useState(props.initialUi?.entryKey ?? 'cat:all');
   const [focus, setFocus] = useState<Focus>(props.initialUi?.focus ?? 'main');
   const [cursor, setCursor] = useState(props.initialUi?.cursor ?? 0);
@@ -64,7 +78,7 @@ export function App(props: AppProps) {
   const [mode, setMode] = useState<'NORMAL' | 'SEARCH' | 'COMMAND'>('NORMAL');
   const [query, setQuery] = useState('');
   const [cmd, setCmd] = useState('');
-  const [overlay, setOverlay] = useState<Overlay | null>(props.firstRun ? { kind: 'welcome' } : null);
+  const [overlay, setOverlay] = useState<Overlay | null>(props.firstRun && props.initialResult ? { kind: 'welcome' } : null);
   const [message, setMessage] = useState<Message | undefined>();
   const [sidebarHidden, setSidebarHidden] = useState(props.initialUi?.sidebarHidden ?? false);
   const [fatal, setFatal] = useState<string | null>(null);
@@ -73,22 +87,34 @@ export function App(props: AppProps) {
   const [flipped, setFlipped] = useState<Set<string>>(new Set());
 
   const rescan = useCallback(async () => {
-    const r = await scan(ctx);
-    setResult(r);
-    setPairs(pendingPairs(ctx, r));
-    return r;
-  }, [ctx]);
+    setRefreshing(true);
+    setFresh(false);
+    try {
+      const snapshot = await (props.refresh?.() ?? scanSnapshot({ ...ctx, now: new Date() }));
+      setResult(snapshot.result);
+      setPairs(snapshot.pairs);
+      setFresh(true);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [ctx, props.refresh]);
 
   // Opening the UI counts as having looked (the status line's "N new" resets).
   useEffect(() => {
-    if (result) markSeen(ctx, result.findings.map((f) => f.id));
-  }, [result]);
+    if (result && fresh && !refreshing) markSeen(ctx, result.findings.map((f) => f.id));
+  }, [result, fresh, refreshing]);
 
   useEffect(() => {
     if (props.initialResult) return;
-    // Let the first frame paint before the (synchronous) scan blocks.
-    const t = setTimeout(() => rescan().catch((e: Error) => setFatal(e.message)), 10);
-    return () => clearTimeout(t);
+    let active = true;
+    void rescan().then(() => {
+      if (active && props.firstRun) setOverlay({ kind: 'welcome' });
+    }).catch((e: Error) => {
+      if (!active) return;
+      if (first) setMessage({ tone: 'error', text: `Refresh failed: ${e.message}` });
+      else setFatal(e.message);
+    });
+    return () => { active = false; };
   }, []);
 
   /* ---------------------------------------------------------------- derived */
@@ -255,7 +281,46 @@ export function App(props: AppProps) {
   const targets = (): Row[] =>
     focus === 'sidebar' ? [] : selected.size ? flat.filter((r) => selected.has(r.key)) : row ? expand([row]) : [];
 
+  /** Projects a memory can be moved to: existing Claude Code projects, suggestion first. */
+  const pickTargets = (q: string, suggested?: string): { path: string; label: string; hint: string }[] => {
+    if (!result) return [];
+    const list = result.projects
+      .filter((p) => p.agent === 'claude-code' && p.exists)
+      .map((p) => ({ path: p.path, label: tildify(p.path, ctx.home), hint: p.path === suggested ? 'suggested' : '' }));
+    const scored = list
+      .map((t) => ({ t, s: fuzzy(q, t.label) }))
+      .filter((x) => x.s >= 0)
+      .sort((a, b) => Number(Boolean(b.t.hint)) - Number(Boolean(a.t.hint)) || b.s - a.s || a.t.label.localeCompare(b.t.label));
+    return scored.map((x) => x.t).slice(0, Math.max(1, Math.min(12, termRows - 8)));
+  };
+
+  const canFix = () => {
+    if (fresh && !refreshing) return true;
+    setMessage({ tone: 'info', text: refreshing ? 'Wait for the refresh before applying changes.' : 'Press r for a fresh scan before applying changes.' });
+    return false;
+  };
+
+  const canMove = (item: NonNullable<Row['item']>) => item.kind === 'memory' && item.agent === 'claude-code' && actionable(item);
+
   const act = (kind: FixKind) => {
+    if (!canFix()) return;
+    if (kind === 'move') {
+      const rs = targets();
+      const ids = pickedFile
+        ? (canMove(pickedFile) ? [pickedFile.id] : [])
+        : rs.flatMap((r) => {
+          if (r.item) return canMove(r.item) ? [r.item.id] : [];
+          if (!r.finding || !result) return [];
+          const items = itemsOf(r.finding, result);
+          return items.length && items.every(canMove) ? [r.finding.id] : [];
+        });
+      if (!ids.length) return setMessage({ tone: 'error', text: 'Only Claude Code memories can be moved to another project.' });
+      const suggested = rs.find((r) => r.finding?.moveTo)?.finding?.moveTo?.projectPath;
+      if (!pickTargets('', suggested).length) {
+        return setMessage({ tone: 'info', text: 'No existing Claude Code projects in this scan. Use apply --move <id> --to <folder>.' });
+      }
+      return setOverlay({ kind: 'pick', ids, query: '', cursor: 0, suggested });
+    }
     // In the file picker, delete / archive act on the picked file only.
     if (pickedFile && (kind === 'delete' || kind === 'archive')) {
       if (!actionable(pickedFile)) return setMessage({ tone: 'error', text: `${pickedFile.name}: ${editability(pickedFile)}.` });
@@ -308,6 +373,7 @@ export function App(props: AppProps) {
   };
 
   const askUndo = () => {
+    if (!canFix()) return;
     const op = [...loadState(ctx.mindstashDir).history].reverse().find((o) => !o.undone);
     if (!op) setMessage({ tone: 'info', text: 'Nothing to undo.' });
     else setOverlay({ kind: 'undo', op });
@@ -345,7 +411,18 @@ export function App(props: AppProps) {
     if (!all) setCursor((c) => clamp(c + 1, 0, Math.max(0, rows.length - 1)));
   };
 
-  const doRescan = () => void rescan().then(() => setMessage({ tone: 'ok', text: '✓ Rescanned.' }));
+  const refreshError = (e: Error) => setMessage({ tone: 'error', text: `Refresh failed: ${e.message}` });
+  const doRescan = () => {
+    if (!refreshing) void rescan().then(() => setMessage({ tone: 'ok', text: '✓ Rescanned.' })).catch(refreshError);
+  };
+  const finishTour = (onboarding: boolean) => {
+    if (onboarding) {
+      const state = loadState(ctx.mindstashDir);
+      state.tourSeen = true;
+      saveState(ctx.mindstashDir, state);
+    }
+    setOverlay(onboarding && !skillInstalled(ctx) && result?.agents.some((agent) => agent.found) ? { kind: 'skill' } : null);
+  };
 
   const commands: Command[] = [
     { name: 'quit', aliases: ['q', 'q!', 'qa', 'wq', 'x'], title: 'Quit', run: () => exit() },
@@ -354,10 +431,11 @@ export function App(props: AppProps) {
     { name: 'checks', title: 'Contradiction checks', run: () => goEntry('view:checks') },
     { name: 'cost', title: 'Token cost', run: () => goEntry('view:cost') },
     { name: 'help', aliases: ['h'], title: 'Keys and commands', run: () => setOverlay({ kind: 'help' }) },
+    { name: 'tour', title: 'Take the quick tour', run: () => setOverlay({ kind: 'tour', page: 0, onboarding: false }) },
     { name: 'undo', aliases: ['u'], title: 'Undo the last change', run: askUndo },
     { name: 'delete', aliases: ['d'], title: 'Delete the selected rows', run: () => act('delete') },
     { name: 'archive', aliases: ['a'], title: 'Archive the selected rows', run: () => act('archive') },
-    { name: 'move', aliases: ['m'], title: 'Move to the suggested project', run: () => act('move') },
+    { name: 'move', aliases: ['m'], title: 'Move to another project', run: () => act('move') },
     { name: 'ignore', aliases: ['i'], title: 'Mark as not a problem', run: () => act('ignore') },
     { name: 'link', aliases: ['relink'], title: 'Add an unlisted memory to MEMORY.md', run: () => act('relink') },
     { name: 'restore', title: 'Restore archived items', run: () => act('restore') },
@@ -427,8 +505,17 @@ export function App(props: AppProps) {
   /* ---------------------------------------------------------------- keys */
 
   useInput((input, key) => {
-    if (!result) return;
     if (key.ctrl && input === 'c') return exit();
+    if (!result) {
+      if (input === 'q') exit();
+      if (input === 'r' && !refreshing) {
+        setFatal(null);
+        void rescan().then(() => {
+          if (props.firstRun) setOverlay({ kind: 'welcome' });
+        }).catch((e: Error) => setFatal(e.message));
+      }
+      return;
+    }
 
     if (overlay) {
       setMessage(undefined);
@@ -436,6 +523,7 @@ export function App(props: AppProps) {
         case 'confirm':
           if (input === 'y' || key.return) {
             const p = overlay.plan;
+            if (!canFix()) return;
             setOverlay(null);
             try {
               apply(ctx, p);
@@ -447,7 +535,7 @@ export function App(props: AppProps) {
             const saved = p.tokensSaved ? ` · saved ~${fmt(p.tokensSaved)} tk/session` : '';
             void rescan().then(() =>
               setMessage({ tone: 'ok', text: `✓ ${plural(p.actions.length, 'change')} applied${saved} · u to undo` }),
-            );
+            ).catch(refreshError);
           } else if (input === 'n' || key.escape || input === 'q') setOverlay(null);
           return;
         case 'undo':
@@ -458,15 +546,23 @@ export function App(props: AppProps) {
             } catch (e) {
               return setMessage({ tone: 'error', text: (e as Error).message });
             }
-            void rescan().then(() => setMessage({ tone: 'ok', text: '✓ Undone.' }));
+            void rescan().then(() => setMessage({ tone: 'ok', text: '✓ Undone.' })).catch(refreshError);
           } else if (input === 'n' || key.escape || input === 'q') setOverlay(null);
           return;
         case 'help':
           if (key.escape || key.return || input === 'q' || input === '?') setOverlay(null);
           return;
         case 'welcome':
-          if (key.return) setOverlay(skillInstalled(ctx) ? null : { kind: 'skill' });
+          if (key.return) setOverlay({ kind: 'tour', page: 0, onboarding: true });
+          else if (key.escape) finishTour(true);
           else if (input === 'q') exit();
+          return;
+        case 'tour':
+          if (key.escape) finishTour(overlay.onboarding);
+          else if (key.return || key.rightArrow) {
+            if (overlay.page === TOUR.length - 1) finishTour(overlay.onboarding);
+            else setOverlay({ ...overlay, page: overlay.page + 1 });
+          } else if (key.leftArrow && overlay.page > 0) setOverlay({ ...overlay, page: overlay.page - 1 });
           return;
         case 'skill':
           if (input === 'y') {
@@ -474,6 +570,28 @@ export function App(props: AppProps) {
             installSkill();
           } else if (input === 'n' || key.escape || key.return) setOverlay(null);
           return;
+        case 'pick': {
+          const list = pickTargets(overlay.query, overlay.suggested);
+          if (key.escape) setOverlay(null);
+          else if (key.return) {
+            const target = list[overlay.cursor];
+            if (!target) return;
+            try {
+              const p = plan(ctx, { move: overlay.ids }, { moveTo: moveTargetFor(ctx, target.path) });
+              setOverlay(p.actions.length ? { kind: 'confirm', plan: p } : null);
+            } catch (e) {
+              setOverlay(null);
+              if (e instanceof FixError) setMessage({ tone: 'error', text: e.message });
+              else throw e;
+            }
+          } else if (key.downArrow || (key.ctrl && (input === 'n' || input === 'j'))) {
+            setOverlay({ ...overlay, cursor: clamp(overlay.cursor + 1, 0, Math.max(0, list.length - 1)) });
+          } else if (key.upArrow || (key.ctrl && (input === 'p' || input === 'k'))) {
+            setOverlay({ ...overlay, cursor: clamp(overlay.cursor - 1, 0, Math.max(0, list.length - 1)) });
+          } else if (key.backspace || key.delete) setOverlay({ ...overlay, query: overlay.query.slice(0, -1), cursor: 0 });
+          else if (input && !key.ctrl && !key.meta) setOverlay({ ...overlay, query: overlay.query + input, cursor: 0 });
+          return;
+        }
         case 'palette': {
           const items = paletteItems(overlay.query);
           if (key.escape) setOverlay(null);
@@ -599,7 +717,7 @@ export function App(props: AppProps) {
 
   /* ---------------------------------------------------------------- render */
 
-  if (fatal) return <Text color={theme.error}>{fatal}</Text>;
+  if (fatal) return <Text color={theme.error}>{fatal}{' · r retry · q quit'}</Text>;
   if (!result) {
     return (
       <Box width={cols} height={termRows} alignItems="center" justifyContent="center">
@@ -621,7 +739,7 @@ export function App(props: AppProps) {
           : 'Empty.';
 
   const statusMode: Mode = overlay && (overlay.kind === 'confirm' || overlay.kind === 'undo') ? 'CONFIRM' : mode;
-  const crumb = [entryLabel, rows.length && !isCost ? `${cur + 1}/${rows.length}` : '', focus === 'detail' ? 'detail' : '']
+  const crumb = [entryLabel, rows.length && !isCost ? `${cur + 1}/${rows.length}` : '', focus === 'detail' ? 'detail' : '', refreshing ? '↻ refreshing' : '']
     .filter(Boolean)
     .join(' › ');
   const hints =
@@ -629,7 +747,7 @@ export function App(props: AppProps) {
       ? 'j/k move · l open · [ ] switch · ^p palette · : command · ? help'
       : focus === 'detail'
         ? picking
-          ? 'j/k pick file · d delete it · a archive it · e edit it · i ignore finding · h back (d in list = all files)'
+          ? 'j/k pick file · d delete · a archive · m move · e edit · h back'
           : 'j/k scroll · d delete · a archive · m move · i ignore · e edit · h back'
         : entry?.kind === 'view' && entry.id === 'archived'
           ? 'R restore · e open · space select · / search'
@@ -680,6 +798,17 @@ export function App(props: AppProps) {
       );
     } else if (overlay.kind === 'help') {
       modal = <Modal {...common} title="Keys" lines={helpLines()} footer="Esc close" />;
+    } else if (overlay.kind === 'pick') {
+      const list = pickTargets(overlay.query, overlay.suggested);
+      modal = (
+        <Modal
+          {...common}
+          title="Move to another project"
+          color={theme.info}
+          lines={paletteLines(list.map((t) => ({ label: t.label, hint: t.hint, run: () => {} })), overlay.query, overlay.cursor, inner)}
+          footer="type to filter   ⏎ choose   Esc cancel   (you confirm the move next)"
+        />
+      );
     } else if (overlay.kind === 'palette') {
       modal = (
         <Modal
@@ -713,6 +842,11 @@ export function App(props: AppProps) {
           footer="⏎ continue   q quit"
         />
       );
+    } else if (overlay.kind === 'tour') {
+      const tip = TOUR[overlay.page]!;
+      modal = <Modal {...common} title={`Tour ${overlay.page + 1}/${TOUR.length} · ${tip.title}`}
+        lines={wrap(tip.text, inner).map((text) => ({ text }))}
+        footer={overlay.page === TOUR.length - 1 ? '⏎ done   ← back   Esc close' : '⏎ next   ← back   Esc skip'} />;
     } else if (overlay.kind === 'skill') {
       const agents = result.agents.filter((a) => a.found).map((a) => agentName(a.id));
       modal = (

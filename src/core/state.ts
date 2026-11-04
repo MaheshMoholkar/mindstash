@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 
@@ -79,7 +80,7 @@ const Side = z.object({
   snippet: z.string(),
 });
 
-const Pair = z.object({ id: z.string(), a: Side, b: Side, shared: z.array(z.string()), cue: z.string(), score: z.number() });
+export const Pair = z.object({ id: z.string(), a: Side, b: Side, shared: z.array(z.string()), cue: z.string(), score: z.number() });
 
 /** The agent's call on a pair. Only valid while both files are unchanged (hashes match). */
 const Verdict = z.object({
@@ -92,6 +93,7 @@ const Verdict = z.object({
 
 const StateSchema = z.object({
   version: z.literal(1),
+  tourSeen: z.boolean().optional(),
   ignored: z.record(z.string(), z.object({ rule: z.string(), title: z.string(), at: z.string() })),
   deleted: z.array(Deleted),
   lastScan: z
@@ -149,7 +151,11 @@ export function loadState(mindstashDir: string): State {
 export function saveState(mindstashDir: string, state: State): void {
   const p = statePath(mindstashDir);
   mkdirSync(dirname(p), { recursive: true });
-  const tmp = p + '.tmp';
-  writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n');
-  renameSync(tmp, p);
+  const tmp = `${p}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
+    renameSync(tmp, p);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
 }

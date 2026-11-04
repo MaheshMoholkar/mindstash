@@ -109,9 +109,15 @@ describe('full-screen UI', () => {
     expect(edits).toEqual([[stale]]);
   });
 
-  it('first run: welcome, then skill offer', async () => {
+  it('first run: welcome, three tour pages, then skill offer', async () => {
     const { press, frame } = await app({ firstRun: true });
     expect(frame()).toContain('Welcome to MindStash');
+    await press(KEY.enter);
+    expect(frame()).toContain('Tour 1/3');
+    await press(KEY.enter);
+    expect(frame()).toContain('Tour 2/3');
+    await press(KEY.enter);
+    expect(frame()).toContain('Tour 3/3');
     await press(KEY.enter);
     expect(frame()).toContain('Use MindStash from your agent?');
     await press('y');
@@ -132,6 +138,21 @@ describe('full-screen UI', () => {
     await tick(200);
     expect(existsSync(second)).toBe(false);
     expect(existsSync(first)).toBe(true);
+  });
+
+  it('moves only the file picked inside a multi-file finding', async () => {
+    const gone = join(fx.home, 'old-project');
+    const first = fx.memory(gone, 'first-note.md', 'First note for the old project.');
+    const second = fx.memory(gone, 'second-note.md', 'Second note for the old project.');
+    const { press, frame } = await app();
+    await press('/', ...'2 memories', KEY.enter, 'l', 'j', 'm', KEY.enter);
+    expect(frame()).toContain('Apply 1 change?');
+    expect(frame()).toMatch(/move +second-note/);
+    await press('y');
+    await tick(200);
+    expect(existsSync(first)).toBe(true);
+    expect(existsSync(second)).toBe(false);
+    expect(existsSync(join(fx.memoryDir(join(fx.home, 'repo')), 'second-note.md'))).toBe(true);
   });
 
   it('groups a long findings list into project folders', async () => {

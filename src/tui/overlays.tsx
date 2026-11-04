@@ -121,7 +121,7 @@ export function paletteLines(items: PaletteItem[], query: string, cursor: number
       text: `${on ? '▌' : ' '} ${fit(it.label, inner - hintW - 3)} ${fit(it.hint, hintW, 'right')}`,
       color: on ? theme.accent : theme.fg,
       bold: on,
-      bg: on ? '#292e42' : undefined,
+      bg: on ? theme.paletteCursor : undefined,
     });
   });
   return out;

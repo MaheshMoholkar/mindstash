@@ -9,6 +9,7 @@ import { agentsTooLong, brokenLink, tooLong, unindexed } from './rules/index-rul
 import { wrongScope } from './rules/scope.js';
 import { relearned, similarMemories, skillOverlap } from './rules/similar.js';
 import { judged, pending } from './contradictions.js';
+import { saveCache, type ScanSnapshot } from './cache.js';
 import { broadInstructions, codexSkillBudget, instructionsTooBig, missingSkill, versionMismatch } from './rules/more.js';
 
 export const RULES = [
@@ -129,7 +130,10 @@ export interface ScanOptions {
 }
 
 export async function scan(ctx: ScanContext, opts: ScanOptions = {}): Promise<ScanResult> {
-  const state = loadState(ctx.mindstashDir);
+  return (await scanSnapshot(ctx, opts)).result;
+}
+
+export async function scanSnapshot(ctx: ScanContext, opts: ScanOptions = {}): Promise<ScanSnapshot> {
   const agents: AgentSummary[] = [];
   const projects: Project[] = [];
   const items: Item[] = [];
@@ -153,26 +157,35 @@ export async function scan(ctx: ScanContext, opts: ScanOptions = {}): Promise<Sc
     });
   }
 
+  const state = loadState(ctx.mindstashDir);
   const all = runRules(ctx, projects, items, state);
   const findings = opts.includeIgnored ? all : all.filter((f) => !state.ignored[f.id]);
 
+  const checks = pending(state, items, projects);
   if (opts.save !== false) {
+    const latest = loadState(ctx.mindstashDir);
     const byId = new Map(items.map((i) => [i.id, i]));
-    state.lastScan = {
+    latest.lastScan = {
       at: ctx.now.toISOString(),
       findings: all.map((f) => store(f, byId)),
       items: items.filter(actionable).map(target),
     };
-    saveState(ctx.mindstashDir, state);
+    saveState(ctx.mindstashDir, latest);
   }
 
-  return {
+  const result: ScanResult = {
     at: ctx.now,
     agents,
     projects,
     items,
     findings,
     ignoredCount: all.length - all.filter((f) => !state.ignored[f.id]).length,
-    pendingChecks: pending(state, items, projects).total,
+    pendingChecks: checks.total,
   };
+  const snapshot = { result, pairs: checks.pairs };
+  if (opts.save !== false) {
+    // The TUI cache always uses the default visibility, even after scan --include-ignored.
+    saveCache(ctx, opts.includeIgnored ? { ...snapshot, result: { ...result, findings: all.filter((f) => !state.ignored[f.id]) } } : snapshot);
+  }
+  return snapshot;
 }

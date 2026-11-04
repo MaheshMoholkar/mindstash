@@ -15,7 +15,7 @@ Works with **Claude Code** and **Codex**. Needs Node 20+ and git (for backups).
 
 </details>
 
-The UI is vim-style: `j/k`, `gg/G`, `h/l` between panes, `/` search, `:` commands, `Ctrl-P` palette, `?` for all keys.
+The UI is vim-style: `j/k`, `gg/G`, `h/l` between panes, `/` search, `:` commands, `Ctrl-P` palette, `?` for all keys. Run `:tour` to replay the quick tour.
 
 ## Use it
 
@@ -24,18 +24,22 @@ npx mindstash              # interactive terminal UI (plain report when piped)
 npx mindstash scan         # plain report; --json for scripts and agents
 npx mindstash show <id>    # why something was flagged, with the file
 npx mindstash cost         # tokens loaded per session, per agent and project
+npx mindstash --theme light
 ```
+
+The terminal UI opens with the last saved scan when available and refreshes it in the background. The local cache contains previews and is readable only by your account by default. The theme defaults to `auto`, which uses `COLORFGBG` when supplied and falls back to Tokyo Night. Presets include `light`, `tokyo-night`, `catppuccin`, `gruvbox`, and `high-contrast`. Set `NO_COLOR=1` to disable colors.
 
 Nothing changes without confirmation. Fixes are backed up to a git repo in `~/.mindstash/backups` and can be undone:
 
 ```sh
 npx mindstash apply --delete <id> --archive <id> --move <id> --ignore <id> --relink <id>
+npx mindstash apply --move <id> --to <folder>
 npx mindstash undo
 npx mindstash archived            # what was archived
 npx mindstash restore <id>        # put it back
 ```
 
-Ids can be finding ids or item ids, so any memory or skill you own can be deleted or archived directly (skills as whole folders). Plugin skills, Codex's bundled skills and Codex-generated memories stay read-only.
+Ids can be finding ids or item ids, so any memory or skill you own can be deleted or archived directly (skills as whole folders). Press `m` on a Claude Code memory or a finding over Claude Code memories to choose the destination project and review the move. Plugin skills, Codex's bundled skills and Codex-generated memories stay read-only.
 
 Use it from inside your agent:
 
@@ -47,7 +51,7 @@ npx mindstash install-hook         # optional: a one-line note at session start 
 
 Both optional installs add to `~/.claude/settings.json` without replacing what's there (a backup is kept), and `--remove` takes them out. They read the cached scan, so they never slow a session down.
 
-`apply` only accepts finding ids from the latest scan, and refuses files that changed since that scan.
+`apply` uses finding and item ids from the latest scan for these fixes, and refuses files that changed since that scan.
 
 Contradictions need judgment, so MindStash only finds candidate pairs (same session, same topic, one side says "never" or names a different version). Your agent judges them through the skill, with no API key:
 

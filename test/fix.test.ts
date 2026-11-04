@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Fixture } from './fixture.js';
 import { scan } from '../src/core/scan.js';
-import { apply, FixError, plan, undo } from '../src/core/fix.js';
+import { apply, FixError, moveTargetFor, plan, undo } from '../src/core/fix.js';
 
 let fx: Fixture;
 beforeEach(() => {
@@ -68,6 +68,30 @@ describe('apply + undo', () => {
     undo(fx.ctx());
     expect(existsSync(src)).toBe(true);
     expect(index(child)).not.toContain('pagersage-plan.md');
+  });
+
+  it('rejects a batch of same-named memories headed for one destination', async () => {
+    const first = fx.memory(join(fx.home, 'gone-a'), 'shared.md', 'First note');
+    const second = fx.memory(join(fx.home, 'gone-b'), 'shared.md', 'Second note');
+    const moveTo = moveTargetFor(fx.ctx(), fx.project('destination'));
+    const result = await scan(fx.ctx());
+    const move = result.findings.filter((f) => f.rule === 'missing-project').map((f) => f.id);
+
+    expect(() => plan(fx.ctx(), { move }, { moveTo })).toThrow('more than one memory');
+    expect(existsSync(first) && existsSync(second)).toBe(true);
+  });
+
+  it('leaves the source and destination untouched if a file arrives before confirmation', async () => {
+    const source = fx.memory(join(fx.home, 'gone'), 'note.md', 'Source note');
+    const moveTo = moveTargetFor(fx.ctx(), fx.project('destination'));
+    const result = await scan(fx.ctx());
+    const id = result.items.find((item) => item.path === source)!.id;
+    const p = plan(fx.ctx(), { move: [id] }, { moveTo });
+    const dest = fx.write(join(moveTo.memoryDir, 'note.md'), 'New destination note');
+
+    expect(() => apply(fx.ctx(), p)).toThrow('already exists');
+    expect(readFileSync(source, 'utf8')).toContain('Source note');
+    expect(readFileSync(dest, 'utf8')).toBe('New destination note');
   });
 
   it('removes a dangling index line for a broken link', async () => {

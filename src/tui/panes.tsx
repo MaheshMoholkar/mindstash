@@ -8,7 +8,6 @@ import { fit, Lines, Panel, short, windowOf, wrap, type Line } from './ui.js';
 /** Keep the end of long paths: "…/api-server" is what tells them apart. */
 const fitStart = (t: string, w: number) => (t.length > w && w > 1 ? '…' + t.slice(t.length - w + 1) : t.padEnd(w));
 
-const HILITE = theme.cursor;
 
 export function Sidebar({
   entries,
@@ -64,15 +63,15 @@ export function Sidebar({
         return (
           <Text
             key={e.key}
-            backgroundColor={on && focused ? HILITE : undefined}
+            backgroundColor={on && focused ? theme.cursor : undefined}
             color={on ? theme.accent : dim ? theme.muted : undefined}
             bold={on}
           >
-            <Text color={color} backgroundColor={on && focused ? HILITE : undefined}>
+            <Text color={color} backgroundColor={on && focused ? theme.cursor : undefined}>
               {label.slice(0, 1)}
             </Text>
-            <Text backgroundColor={on && focused ? HILITE : undefined}>{label.slice(1)}</Text>
-            <Text color={on ? theme.accent : e.kind === 'category' ? color : theme.warn} bold backgroundColor={on && focused ? HILITE : undefined}>
+            <Text backgroundColor={on && focused ? theme.cursor : undefined}>{label.slice(1)}</Text>
+            <Text color={on ? theme.accent : e.kind === 'category' ? color : theme.warn} bold backgroundColor={on && focused ? theme.cursor : undefined}>
               {r}
             </Text>
           </Text>
@@ -173,16 +172,16 @@ export function List({
         const tagColor = row.color || theme.ok;
         return (
           <Text key={row.key} backgroundColor={bg}>
-            <Text color={on ? '#ffffff' : theme.accent} backgroundColor={bg}>{on ? '▌' : ' '}</Text>
+            <Text color={on ? theme.cursorFg : theme.accent} backgroundColor={bg}>{on ? '▌' : ' '}</Text>
             <Text color={theme.accent2} backgroundColor={bg}>{sel ? '◆' : ' '}</Text>
             <Text color={conf} backgroundColor={bg}>{row.finding || row.pair ? '●' : ' '}</Text>
             <Text color={k.color} backgroundColor={bg}>{` ${k.g} `}</Text>
             <Text color={theme.rule} backgroundColor={bg}>{indent}</Text>
-            <Text bold={on || sel || Boolean(row.folder)} color={on ? '#ffffff' : row.folder ? theme.accent : theme.fg} backgroundColor={bg}>
+            <Text bold={on || sel || Boolean(row.folder)} color={on ? theme.cursorFg : row.folder ? theme.accent : theme.fg} backgroundColor={bg}>
               {row.folder ? fitStart(row.primary, priW - indent.length) : fit(row.primary, priW - indent.length)}
             </Text>
             <Text backgroundColor={bg}> </Text>
-            <Text color={on ? '#e0e6ff' : theme.info} backgroundColor={bg}>
+            <Text color={on ? theme.cursorInfo : theme.info} backgroundColor={bg}>
               {/^[~/]/.test(row.secondary) ? fitStart(row.secondary, secW) : fit(row.secondary, secW)}
             </Text>
             <Text backgroundColor={bg}>{' '.repeat(Math.max(1, tagW - tag.length - 1))}</Text>
@@ -256,7 +255,7 @@ export function StatusLine({
       <Text backgroundColor={MODE_COLOR[mode]} color={theme.ink} bold>
         {pill}
       </Text>
-      <Text backgroundColor={HILITE} color={theme.fg}>
+      <Text backgroundColor={theme.cursor} color={theme.cursorFg}>
         {fit(` ${crumb}`, Math.max(0, room))}
       </Text>
       {sel ? (
@@ -264,10 +263,10 @@ export function StatusLine({
           {sel}
         </Text>
       ) : null}
-      <Text backgroundColor={HILITE} color={theme.info}>
+      <Text backgroundColor={theme.cursor} color={theme.cursorInfo}>
         {room >= 0 ? tk : ''}
       </Text>
-      <Text backgroundColor={theme.border} color={theme.fg}>
+      <Text backgroundColor={theme.border} color={theme.ink}>
         {room >= -tk.length ? help : ''}
       </Text>
     </Text>

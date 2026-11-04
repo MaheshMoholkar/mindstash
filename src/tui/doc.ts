@@ -9,12 +9,12 @@ import { fmt, pill, wrap, type Line, type Seg } from './ui.js';
 const blank: Line = { text: '' };
 
 export const KIND_GLYPH: Record<string, { g: string; color: string }> = {
-  memory: { g: '◆', color: theme.accent },
-  skill: { g: '✦', color: theme.info },
-  instructions: { g: '▤', color: theme.accent2 },
-  index: { g: '≣', color: theme.muted },
-  scope: { g: '▸', color: theme.accent },
-  pair: { g: '⇄', color: theme.error },
+  memory: { g: '◆', get color() { return theme.accent; } },
+  skill: { g: '✦', get color() { return theme.info; } },
+  instructions: { g: '▤', get color() { return theme.accent2; } },
+  index: { g: '≣', get color() { return theme.muted; } },
+  scope: { g: '▸', get color() { return theme.accent; } },
+  pair: { g: '⇄', get color() { return theme.error; } },
 };
 
 /** "WHY FLAGGED ──────────" */
@@ -184,7 +184,7 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
     // File picker: j/k choose a file, d / a / e act on just that one.
     const at = Math.min(fileCursor, items.length - 1);
     out.push(section(`${items.length} files`, width));
-    out.push({ text: '', segs: [{ text: 'j/k pick · d delete · a archive · e edit — acts on the picked file only', color: theme.muted }] });
+    out.push({ text: '', segs: [{ text: 'j/k pick · d delete · a archive · m move · e edit', color: theme.muted }] });
     const nw = String(items.length).length;
     items.forEach((i, n) => {
       const on = n === at;
@@ -197,7 +197,7 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
           { text: on ? '▌' : ' ', color: theme.accent },
           { text: ` ${String(n + 1).padStart(nw, '0')} `, color: on ? theme.accent : theme.muted },
           { text: `${k.g} `, color: k.color },
-          { text: i.name, color: on ? '#ffffff' : theme.fg, bold: on },
+          { text: i.name, color: on ? theme.cursorFg : theme.fg, bold: on },
           ...(i.readOnly ? [{ text: '  read-only', color: theme.error }] : []),
           { text: `  ~${fmt(i.loadTokens)} tk`, color: theme.muted },
         ] as Seg[],

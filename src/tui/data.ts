@@ -2,7 +2,7 @@ import { agentName } from '../adapters/index.js';
 import { CATEGORIES, itemsOf, subject } from '../cli/format.js';
 import type { Archived, Pair } from '../core/state.js';
 import type { Category, Finding, Item, ScanResult } from '../core/types.js';
-import { CATEGORY_COLOR } from './theme.js';
+import { CATEGORY_COLOR, theme } from './theme.js';
 import { plural } from '../core/text.js';
 
 /** Sidebar entries. Headers are labels; everything else can be selected. */
@@ -195,7 +195,7 @@ export function rowsFor(entry: Entry | undefined, r: ScanResult, pairs: Pair[], 
   if (entry.kind === 'view' && entry.id === 'archived') {
     return [...archived]
       .reverse()
-      .map((a): Row => ({ kind: a.kind, key: a.id, primary: a.name, secondary: a.scope, tag: 'archived', color: '#bb9af7', archived: a }))
+      .map((a): Row => ({ kind: a.kind, key: a.id, primary: a.name, secondary: a.scope, tag: 'archived', color: theme.accent2, archived: a }))
       .filter((row) => match(row.primary, row.secondary));
   }
   if (entry.kind === 'view' && entry.id === 'checks') {

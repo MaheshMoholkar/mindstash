@@ -1,17 +1,18 @@
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { constants, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative } from 'node:path';
+import { decodeProjectKey, indexLinks } from '../adapters/claude-code.js';
 import { Backup } from './backup.js';
 import { signature } from './minhash.js';
 import { loadState, saveState, type Archived, type Operation, type StoredFinding, type StoredTarget } from './state.js';
-import { contentHash, parseFrontmatter, shortHash } from './text.js';
-import type { FixKind, ScanContext } from './types.js';
+import { contentHash, parseFrontmatter, sanitizePath, shortHash, tildify } from './text.js';
+import type { FixKind, MoveTarget, ScanContext } from './types.js';
 
 export type Requests = Partial<Record<FixKind, string[]>>;
 
 export type Action =
   | { kind: 'delete'; findingId: string; target: StoredTarget }
   | { kind: 'archive'; findingId: string; target: StoredTarget; dest: string }
-  | { kind: 'move'; findingId: string; target: StoredTarget; dest: string; destIndex: string; label: string }
+  | { kind: 'move'; findingId: string; target: StoredTarget; dest: string; destIndex: string; projectPath: string; label: string }
   | { kind: 'unlink'; findingId: string; indexPath: string; file: string }
   | { kind: 'delete-skill'; findingId: string; target: StoredTarget; dir: string; files: string[] }
   | { kind: 'relink'; findingId: string; target: StoredTarget; indexPath: string; line: string }
@@ -61,17 +62,46 @@ function checkUnchanged(id: string, t: StoredTarget): void {
   }
 }
 
+export interface PlanOptions {
+  /** Where "move" sends memories when the user picked a project (overrides a finding's suggestion). */
+  moveTo?: MoveTarget;
+}
+
+/** Move target for a Claude Code project folder. */
+export function moveTargetFor(ctx: ScanContext, folder: string): MoveTarget {
+  checkProjectFolder(folder, tildify(folder, ctx.home));
+  const projectPath = realpathSync(folder);
+  const key = sanitizePath(projectPath);
+  const label = tildify(projectPath, ctx.home);
+  if (decodeProjectKey(key) !== projectPath) throw new FixError(`Claude Code's project key for ${label} is ambiguous.`);
+  const memoryDir = join(ctx.claudeDir, 'projects', key, 'memory');
+  return { projectPath, memoryDir, indexPath: join(memoryDir, 'MEMORY.md'), label };
+}
+
+function movable(t: StoredTarget): boolean {
+  return !t.readOnly && t.kind === 'memory' && (t.agent ?? 'claude-code') === 'claude-code';
+}
+
+function checkProjectFolder(path: string, label: string): void {
+  if (!statSync(path, { throwIfNoEntry: false })?.isDirectory()) throw new FixError(`Project folder does not exist: ${label}`);
+}
+
+function checkMoveDestination(dest: string, id: string): void {
+  if (lstatSync(dest, { throwIfNoEntry: false })) throw new FixError(`${id}: ${dest} already exists.`);
+}
+
 /**
  * Turn finding ids (or item ids, for acting on one memory or skill directly) into concrete
  * actions. Only ids from the latest scan are accepted, so this can never touch an arbitrary file.
  */
-export function plan(ctx: ScanContext, requests: Requests): Plan {
+export function plan(ctx: ScanContext, requests: Requests, opts: PlanOptions = {}): Plan {
   const state = loadState(ctx.mindstashDir);
   if (!state.lastScan) throw new FixError('No scan yet. Run `mindstash scan` first.');
   const byId = new Map(state.lastScan.findings.map((f) => [f.id, f]));
   const itemsById = new Map(state.lastScan.items.map((t) => [t.itemId, t]));
   const actions: Action[] = [];
   const claimed = new Map<string, string>(); // path -> action kind
+  const moveDestinations = new Set<string>();
   let tokensSaved = 0;
 
   const claim = (path: string, kind: string, id: string) => {
@@ -82,9 +112,24 @@ export function plan(ctx: ScanContext, requests: Requests): Plan {
     return dup;
   };
 
-  /** One memory or skill, picked directly rather than through a finding. */
-  const itemAction = (kind: 'delete' | 'archive', id: string, t: StoredTarget) => {
+  const moveMemory = (id: string, t: StoredTarget, to: MoveTarget) => {
+    const dest = join(to.memoryDir, basename(t.path));
+    if (dest === t.path) throw new FixError(`${id}: ${t.name} is already in ${to.label}.`);
+    if (claim(t.path, 'move', id)) return;
+    checkProjectFolder(to.projectPath, to.label);
+    checkMoveDestination(dest, id);
+    if (moveDestinations.has(dest)) throw new FixError(`${id}: more than one memory would move to ${dest}.`);
+    moveDestinations.add(dest);
+    actions.push({ kind: 'move', findingId: id, target: t, dest, destIndex: to.indexPath, projectPath: to.projectPath, label: to.label });
+  };
+
+  const itemAction = (kind: 'delete' | 'archive' | 'move', id: string, t: StoredTarget) => {
     checkUnchanged(id, t);
+    if (kind === 'move') {
+      if (!movable(t)) throw new FixError(`${id}: only Claude Code memories can be moved.`);
+      if (!opts.moveTo) throw new FixError(`${id}: pick a project to move it to.`);
+      return moveMemory(id, t, opts.moveTo);
+    }
     if (t.kind === 'memory') {
       if (claim(t.path, kind, id)) return;
       tokensSaved += t.loadTokens;
@@ -128,12 +173,16 @@ export function plan(ctx: ScanContext, requests: Requests): Plan {
       const f = byId.get(id);
       const item = f ? undefined : itemsById.get(id);
       if (item) {
-        if (kind !== 'delete' && kind !== 'archive') throw new FixError(`${id}: ${item.name} can only be deleted or archived directly.`);
+        if (kind !== 'delete' && kind !== 'archive' && kind !== 'move') {
+          throw new FixError(`${id}: ${item.name} can only be deleted, archived or moved directly.`);
+        }
         itemAction(kind, id, item);
         continue;
       }
       if (!f) throw new FixError(`Unknown id "${id}". Ids come from the latest \`mindstash scan\`.`);
-      if (!f.fixes.includes(kind)) {
+      // Moving to a project the user picked works for any finding over Claude Code memories.
+      const pickedMove = kind === 'move' && opts.moveTo && f.targets.length > 0 && f.targets.every(movable);
+      if (!f.fixes.includes(kind) && !pickedMove) {
         throw new FixError(`${id} (${f.rule}) can't be fixed with ${kind}. Allowed: ${f.fixes.join(', ')}.`);
       }
       if (kind === 'ignore') {
@@ -159,18 +208,19 @@ export function plan(ctx: ScanContext, requests: Requests): Plan {
       for (const t of f.targets) {
         if (t.readOnly || t.kind !== 'memory') throw new FixError(`${id}: ${t.name} is read-only for MindStash.`);
         checkUnchanged(id, t);
+        if (kind === 'move') {
+          if (!movable(t)) throw new FixError(`${id}: only Claude Code memories can be moved.`);
+          const to = opts.moveTo ?? f.moveTo;
+          if (!to) throw new FixError(`${id}: pick a project to move it to.`);
+          moveMemory(id, t, to);
+          continue;
+        }
         if (claim(t.path, kind, id)) continue;
-        // A move still loads, just in the right place, so it saves nothing.
-        if (kind !== 'move') tokensSaved += t.loadTokens;
+        tokensSaved += t.loadTokens;
         if (kind === 'delete') actions.push({ kind, findingId: id, target: t });
         else if (kind === 'archive') {
           const dir = join(ctx.mindstashDir, 'archive', 'claude-code', t.projectKey ?? 'unknown');
           actions.push({ kind, findingId: id, target: t, dest: uniqueDest(dir, basename(t.path)) });
-        } else {
-          const to = f.moveTo!;
-          const dest = join(to.memoryDir, basename(t.path));
-          if (existsSync(dest)) throw new FixError(`${id}: ${dest} already exists; move it by hand.`);
-          actions.push({ kind, findingId: id, target: t, dest, destIndex: to.indexPath, label: to.label });
         }
       }
     }
@@ -204,32 +254,39 @@ export function describe(a: Action): string {
 /** Back up, apply, and record the operation so `undo` can revert it. */
 export function apply(ctx: ScanContext, p: Plan): Operation {
   const state = loadState(ctx.mindstashDir);
-  const touched: string[] = [];
+  const pathsByAction = new Map<Action, string[]>();
   for (const a of p.actions) {
-    if (a.kind === 'ignore') continue;
-    if (a.kind === 'unlink') {
-      touched.push(a.indexPath);
-      continue;
+    const paths: string[] = [];
+    pathsByAction.set(a, paths);
+    switch (a.kind) {
+      case 'ignore':
+        break;
+      case 'unlink':
+      case 'relink':
+        paths.push(a.indexPath);
+        break;
+      case 'restore':
+        for (const f of a.files) paths.push(f.from, f.to);
+        if (a.entry.indexPath) paths.push(a.entry.indexPath);
+        break;
+      case 'delete-skill':
+      case 'archive-skill':
+        paths.push(...a.files);
+        if (a.kind === 'archive-skill') paths.push(...a.files.map((f) => join(a.dest, relative(a.dir, f))));
+        break;
+      default:
+        paths.push(a.target.path);
+        if (a.target.indexPath) paths.push(a.target.indexPath);
+        if (a.kind === 'archive') paths.push(a.dest);
+        if (a.kind === 'move') {
+          checkUnchanged(a.findingId, a.target);
+          checkProjectFolder(a.projectPath, a.label);
+          checkMoveDestination(a.dest, a.findingId);
+          paths.push(a.dest, a.destIndex);
+        }
     }
-    if (a.kind === 'relink') {
-      touched.push(a.indexPath);
-      continue;
-    }
-    if (a.kind === 'restore') {
-      for (const f of a.files) touched.push(f.from, f.to);
-      if (a.entry.indexPath) touched.push(a.entry.indexPath);
-      continue;
-    }
-    if (a.kind === 'delete-skill' || a.kind === 'archive-skill') {
-      touched.push(...a.files);
-      if (a.kind === 'archive-skill') touched.push(...a.files.map((f) => join(a.dest, relative(a.dir, f))));
-      continue;
-    }
-    touched.push(a.target.path);
-    if (a.target.indexPath) touched.push(a.target.indexPath);
-    if (a.kind === 'archive') touched.push(a.dest);
-    if (a.kind === 'move') touched.push(a.dest, a.destIndex);
   }
+  const touched = [...pathsByAction.values()].flat();
 
   const summary = p.actions.map(describe).join('\n');
   const backup = new Backup(ctx.mindstashDir);
@@ -252,7 +309,9 @@ export function apply(ctx: ScanContext, p: Plan): Operation {
   };
   const at = ctx.now.toISOString();
 
-  for (const a of p.actions) {
+  const changed = new Set<string>();
+  const hasMoves = p.actions.some((a) => a.kind === 'move');
+  const perform = (a: Action) => {
     switch (a.kind) {
       case 'ignore':
         if (!state.ignored[a.findingId]) {
@@ -319,17 +378,24 @@ export function apply(ctx: ScanContext, p: Plan): Operation {
       }
       case 'move': {
         const file = basename(a.target.path);
-        const lines = a.target.indexPath ? removeIndexLine(a.target.indexPath, file) : [];
+        checkUnchanged(a.findingId, a.target);
         mkdirSync(dirname(a.dest), { recursive: true });
-        renameSync(a.target.path, a.dest);
-        const line = lines[0] ?? `- [${a.target.name}](${file})`;
-        const existing = existsSync(a.destIndex) ? readFileSync(a.destIndex, 'utf8') : '';
-        const sep = existing === '' || existing.endsWith('\n') ? '' : '\n';
-        writeFileSync(a.destIndex, existing + sep + line + '\n');
+        copyFileSync(a.target.path, a.dest, constants.COPYFILE_EXCL);
+        changed.add(a.dest);
+        if (a.target.indexPath) changed.add(a.target.indexPath);
+        const lines = a.target.indexPath ? removeIndexLine(a.target.indexPath, file) : [];
+        const destIndex = existsSync(a.destIndex) ? readFileSync(a.destIndex, 'utf8') : '';
+        if (!indexLinks(destIndex).has(file)) {
+          changed.add(a.destIndex);
+          appendLine(a.destIndex, lines[0] ?? `- [${a.target.name}](${file})`);
+        }
+        checkUnchanged(a.findingId, a.target);
+        rmSync(a.target.path);
+        changed.add(a.target.path);
         break;
       }
     }
-  }
+  };
 
   const op: Operation = {
     id: shortHash(commit + at),
@@ -343,8 +409,19 @@ export function apply(ctx: ScanContext, p: Plan): Operation {
     archivedRemoved,
     undone: false,
   };
-  state.history.push(op);
-  saveState(ctx.mindstashDir, state);
+  try {
+    for (const action of p.actions) {
+      if (hasMoves && action.kind !== 'move') {
+        for (const path of pathsByAction.get(action)!) changed.add(path);
+      }
+      perform(action);
+    }
+    state.history.push(op);
+    saveState(ctx.mindstashDir, state);
+  } catch (error) {
+    if (changed.size) backup.restore(commit, snap.filter(({ path }) => changed.has(path)));
+    throw error;
+  }
   return op;
 }
 

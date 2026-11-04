@@ -17,7 +17,9 @@ export type Overlay =
   | { kind: 'help' }
   | { kind: 'palette'; query: string; cursor: number }
   | { kind: 'welcome' }
-  | { kind: 'skill' };
+  | { kind: 'skill' }
+  | { kind: 'tour'; page: number; onboarding: boolean }
+  | { kind: 'pick'; ids: string[]; query: string; cursor: number; suggested?: string };
 
 export interface Message {
   tone: 'ok' | 'error' | 'info';

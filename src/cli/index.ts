@@ -1,20 +1,22 @@
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { Command, Option } from 'commander';
 import chalk from 'chalk';
-import { defaultContext, scan } from '../core/scan.js';
-import { apply, describe, FixError, plan, undo, type Requests } from '../core/fix.js';
+import { defaultContext, scan, scanSnapshot } from '../core/scan.js';
+import { apply, describe, FixError, moveTargetFor, plan, undo, type Requests } from '../core/fix.js';
 import { cost } from '../core/cost.js';
 import { loadState, saveState } from '../core/state.js';
 import { pending } from '../core/contradictions.js';
 import { installHook, installStatusLine, markSeen, refreshInBackground, sessionNote, statusText } from '../core/notify.js';
-import { clip, tildify } from '../core/text.js';
-import type { Finding, ScanResult } from '../core/types.js';
+import { clip, tildify, untildify } from '../core/text.js';
+import type { Finding, ScanContext, ScanResult } from '../core/types.js';
 import { costReport, itemsOf, scanReport, showFinding } from './format.js';
 import { installSkills, skillInstalled } from './skill.js';
 
 const VERSION = '0.3.1';
+
+if (process.env.NO_COLOR) chalk.level = 0;
 
 function findingJson(f: Finding, r: ScanResult, withBody = false) {
   return {
@@ -111,15 +113,30 @@ async function runScan(opts: { json?: boolean; full?: boolean; includeIgnored?: 
   }
 }
 
+program
+  .command('_tui-refresh <context>', { hidden: true })
+  .action(async (context: string) => {
+    if (!process.send) throw new Error('This command requires the interactive UI.');
+    try {
+      const ctx = JSON.parse(context) as ScanContext;
+      const snapshot = await scanSnapshot({ ...ctx, now: new Date() });
+      process.send({ snapshot });
+    } catch (error) {
+      process.send({ error: (error as Error).message });
+    }
+  });
+
 // No command: interactive UI in a terminal, plain report anywhere else.
-scanCommand(program).action(async (opts: { json?: boolean; full?: boolean; includeIgnored?: boolean }) => {
-  const interactive =
-    process.stdout.isTTY && process.stdin.isTTY && !opts.json && !opts.full && !process.env.CI && process.env.TERM !== 'dumb';
-  if (!interactive) return runScan(opts);
-  // Loaded only here, so plain commands (and hooks) never pay for Ink and React.
-  const { runTui } = await import('../tui/run.js');
-  await runTui(defaultContext(), selfCommand());
-});
+scanCommand(program)
+  .addOption(new Option('--theme <preset>', 'terminal theme').choices(['auto', 'light', 'tokyo-night', 'catppuccin', 'gruvbox', 'high-contrast']))
+  .action(async (opts: { json?: boolean; full?: boolean; includeIgnored?: boolean; theme?: string }) => {
+    const interactive =
+      process.stdout.isTTY && process.stdin.isTTY && !opts.json && !opts.full && !process.env.CI && process.env.TERM !== 'dumb';
+    if (!interactive) return runScan(opts);
+    // Loaded only here, so plain commands (and hooks) never pay for Ink and React.
+    const { runTui } = await import('../tui/run.js');
+    await runTui(defaultContext(), selfCommand(), opts.theme);
+  });
 scanCommand(program.command('scan').description('scan memories and skills and report what looks wrong')).action(runScan);
 
 program
@@ -143,11 +160,12 @@ program
   .description('apply fixes to findings from the latest scan (backed up, undoable)')
   .option('--delete <ids...>', 'delete these memories')
   .option('--archive <ids...>', 'hide from the agent, keep a copy in ~/.mindstash/archive')
-  .option('--move <ids...>', 'move to the suggested project')
+  .option('--move <ids...>', 'move to the suggested project (or --to)')
+  .option('--to <folder>', 'project folder to move memories to')
   .option('--ignore <ids...>', 'mark as "not a problem"')
   .option('--relink <ids...>', 'add an unlisted memory back into MEMORY.md')
   .option('-y, --yes', 'apply without asking')
-  .action(async (opts: { delete?: string[]; archive?: string[]; move?: string[]; ignore?: string[]; relink?: string[]; yes?: boolean }) => {
+  .action(async (opts: { delete?: string[]; archive?: string[]; move?: string[]; ignore?: string[]; relink?: string[]; to?: string; yes?: boolean }) => {
     const ctx = defaultContext();
     const req: Requests = {
       delete: ids(opts.delete),
@@ -156,13 +174,19 @@ program
       ignore: ids(opts.ignore),
       relink: ids(opts.relink),
     };
+    if (opts.to && !req.move?.length) {
+      console.error('--to requires --move.');
+      process.exitCode = 2;
+      return;
+    }
     if (!Object.values(req).some((v) => v?.length)) {
       console.error('Nothing to apply. Example: mindstash apply --delete a1b2c3 --ignore d4e5f6');
       process.exitCode = 1;
       return;
     }
     try {
-      const p = plan(ctx, req);
+      const folder = opts.to ? resolve(untildify(opts.to, ctx.home)) : undefined;
+      const p = plan(ctx, req, folder ? { moveTo: moveTargetFor(ctx, folder) } : {});
       if (p.actions.length === 0) {
         console.log('Nothing to change.');
         return;
