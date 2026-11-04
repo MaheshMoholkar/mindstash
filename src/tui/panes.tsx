@@ -28,6 +28,7 @@ export function Sidebar({
     <Panel title="MindStash" width={width} height={height} focused={focused}>
       {entries.slice(start, end).map((e, i) => {
         const on = start + i === cursor;
+        if (e.kind === 'gap') return <Text key={e.key}> </Text>;
         if (e.kind === 'header') {
           return (
             <Text key={e.key} color={theme.muted} bold>
@@ -113,7 +114,7 @@ export function List({
               {fit(row.primary, priW)}
             </Text>
             <Text> </Text>
-            <Text color={theme.muted}>{fitStart(row.secondary, secW)}</Text>
+            <Text color={theme.muted}>{/^[~/]/.test(row.secondary) ? fitStart(row.secondary, secW) : fit(row.secondary, secW)}</Text>
             <Text> </Text>
             <Text color={row.color || theme.ok}>{fit(row.tag, tagW, 'right')}</Text>
           </Text>

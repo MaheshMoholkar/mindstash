@@ -10,7 +10,7 @@ import { actionable, scan } from '../core/scan.js';
 import { loadState, type Pair } from '../core/state.js';
 import { plural } from '../core/text.js';
 import type { FixKind, ScanContext, ScanResult } from '../core/types.js';
-import { pathsOf, rowsFor, selectable, sidebarEntries, type Entry, type Row } from './data.js';
+import { pathsOf, rowsFor, scopeEntries, selectable, sidebarEntries, type Entry, type Row } from './data.js';
 import { docFor, editability } from './doc.js';
 import { fuzzy, helpLines, Modal, paletteLines, type PaletteItem } from './overlays.js';
 import { CommandLine, Doc, List, Sidebar, StatusLine, type Mode } from './panes.js';
@@ -85,9 +85,13 @@ export function App(props: AppProps) {
   /* ---------------------------------------------------------------- derived */
 
   const entries = useMemo(() => (result ? sidebarEntries(result, pairs) : []), [result, pairs]);
-  const found = entries.findIndex((e) => e.key === entryKey && selectable(e));
+  const scopes = useMemo(() => (result ? scopeEntries(result) : []), [result]);
+  const scopeEntry = scopes.find((e) => e.key === entryKey);
+  // An open scope highlights "Browse all" in the sidebar.
+  const sideKey = scopeEntry ? 'view:browse' : entryKey;
+  const found = entries.findIndex((e) => e.key === sideKey && selectable(e));
   const entryIdx = found >= 0 ? found : entries.findIndex(selectable);
-  const entry: Entry | undefined = entries[entryIdx];
+  const entry: Entry | undefined = scopeEntry ?? entries[entryIdx];
   const rows = useMemo(() => (result ? rowsFor(entry, result, pairs, query) : []), [entry, result, pairs, query]);
   const cur = clamp(cursor, 0, Math.max(0, rows.length - 1));
   const row: Row | undefined = rows[cur];
@@ -96,7 +100,8 @@ export function App(props: AppProps) {
   const showSidebar = !sidebarHidden && cols >= 72;
   const sw = showSidebar ? (cols >= 120 ? 34 : cols >= 96 ? 30 : 26) : 0;
   const mw = cols - sw;
-  const bodyH = termRows - 2;
+  // One spare row: some terminals scroll when the last line is written.
+  const bodyH = termRows - 3;
   const listH = Math.max(6, Math.floor(bodyH * 0.45));
   const docW = mw - 4;
 
@@ -155,6 +160,7 @@ export function App(props: AppProps) {
 
   const focusRight = () => {
     if (focus === 'sidebar') setFocus('main');
+    else if (focus === 'main' && row?.group) goEntry(row.key);
     else if (focus === 'main' && row && !isCost) {
       setFocus('detail');
       setOffset(0);
@@ -162,6 +168,11 @@ export function App(props: AppProps) {
   };
   const focusLeft = () => {
     if (focus === 'detail') setFocus('main');
+    else if (focus === 'main' && scopeEntry) {
+      const back = scopes.findIndex((e) => e.key === scopeEntry.key);
+      goEntry('view:browse');
+      setCursor(Math.max(0, back));
+    }
     else if (focus === 'main' && showSidebar) setFocus('sidebar');
   };
 
@@ -281,8 +292,8 @@ export function App(props: AppProps) {
     for (const e of entries) {
       if (e.kind === 'category') add(`Go to ${e.label}`, `${e.count} findings`, () => goEntry(e.key), 3);
       if (e.kind === 'view') add(`Go to ${e.label}`, 'view', () => goEntry(e.key), 3);
-      if (e.kind === 'scope') add(e.group.label, 'scope', () => goEntry(e.key));
     }
+    for (const e of scopes) if (e.kind === 'scope') add(e.group.label, 'scope', () => goEntry(e.key));
     if (q) {
       const all = rowsFor(entries.find((e) => e.key === 'cat:all'), result, pairs, '');
       all.forEach((r, i) =>
@@ -294,7 +305,7 @@ export function App(props: AppProps) {
           setFocus('main');
         }),
       );
-      for (const e of entries) {
+      for (const e of scopes) {
         if (e.kind !== 'scope') continue;
         e.group.items.forEach((it) =>
           add(it.name, `${it.kind} · ${e.group.label}`, () => {
@@ -443,6 +454,7 @@ export function App(props: AppProps) {
     else if (key.tab) setFocus((f) => (f === 'sidebar' ? 'main' : showSidebar ? 'sidebar' : 'main'));
     else if (key.escape) {
       if (focus === 'detail') setFocus('main');
+      else if (scopeEntry && !query) focusLeft();
       else if (query) setQuery('');
       else if (selected.size) setSelected(new Set());
     } else if (input === '[') moveSidebar(-1);
@@ -478,7 +490,7 @@ export function App(props: AppProps) {
   }
 
   const entryLabel =
-    entry?.kind === 'category' ? entry.label : entry?.kind === 'view' ? entry.label : entry?.kind === 'scope' ? entry.group.label : '';
+    entry?.kind === 'category' || entry?.kind === 'view' ? entry.label : entry?.kind === 'scope' ? `Browse › ${entry.group.label}` : '';
   const listTitle = `${entryLabel}${query ? `  /${query}` : ''}`;
   const emptyText =
     entry?.kind === 'view' && entry.id === 'checks'

@@ -66,6 +66,21 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
     ].flatMap((l) => (l.gutter || l.text.length <= width ? [l] : wrap(l.text, width).map((t) => ({ ...l, text: t }))));
   }
 
+  if (row.group) {
+    const g = row.group;
+    return [
+      { text: g.label, bold: true, color: theme.accent },
+      { text: [g.memories && `${g.memories} memories`, g.skills && `${g.skills} skills`, `~${fmt(g.tokens)} tk/session`].filter(Boolean).join(' · '), color: theme.fg },
+      ...(g.gone ? [{ text: 'The project folder no longer exists.', color: theme.warn }] : []),
+      blank,
+      section('Contents'),
+      ...g.items.slice(0, full ? 500 : 12).map((i) => ({ text: `• ${i.name}  (${i.kind})` })),
+      ...(g.items.length > 12 && !full ? [{ text: `… ${g.items.length - 12} more`, dim: true }] : []),
+      blank,
+      { text: 'Enter to open this scope · h to go back', dim: true },
+    ];
+  }
+
   const out: Line[] = [];
   const f = row.finding;
   if (f) {

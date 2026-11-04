@@ -49,7 +49,7 @@ describe('full-screen UI', () => {
     const { frame } = await app();
     const f = frame();
     expect(f).toContain('FINDINGS');
-    expect(f).toContain('SCOPES');
+    expect(f).toContain('Browse all');
     expect(f).toContain('Preview');
     expect(f).toContain('NORMAL');
     expect(f).toContain('old-api');

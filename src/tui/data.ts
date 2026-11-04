@@ -3,13 +3,15 @@ import { CATEGORIES, itemsOf, subject } from '../cli/format.js';
 import type { Pair } from '../core/state.js';
 import type { Category, Finding, Item, ScanResult } from '../core/types.js';
 import { CATEGORY_COLOR } from './theme.js';
+import { plural } from '../core/text.js';
 
 /** Sidebar entries. Headers are labels; everything else can be selected. */
 export type Entry =
   | { kind: 'header'; key: string; label: string }
   | { kind: 'category'; key: string; id: Category | 'all'; label: string; count: number; color: string }
   | { kind: 'scope'; key: string; group: Group }
-  | { kind: 'view'; key: string; id: 'cost' | 'checks'; label: string; badge?: number };
+  | { kind: 'view'; key: string; id: 'cost' | 'checks' | 'browse'; label: string; badge?: number }
+  | { kind: 'gap'; key: string };
 
 export interface Group {
   key: string;
@@ -32,6 +34,7 @@ export interface Row {
   finding?: Finding;
   item?: Item;
   pair?: Pair;
+  group?: Group;
 }
 
 export const RULE_LABEL: Record<string, string> = {
@@ -98,15 +101,19 @@ export function sidebarEntries(r: ScanResult, pairs: Pair[]): Entry[] {
     const count = r.findings.filter((f) => f.category === c.id).length;
     if (count) out.push({ kind: 'category', key: `cat:${c.id}`, id: c.id, label: c.label, count, color: CATEGORY_COLOR[c.id]! });
   }
-  out.push({ kind: 'header', key: 'h:views', label: 'VIEWS' });
+  out.push({ kind: 'gap', key: 'g:1' }, { kind: 'header', key: 'h:views', label: 'VIEWS' });
+  out.push({ kind: 'view', key: 'view:browse', id: 'browse', label: 'Browse all', badge: groupsOf(r).length });
   out.push({ kind: 'view', key: 'view:checks', id: 'checks', label: 'Checks', badge: pairs.length || undefined });
   out.push({ kind: 'view', key: 'view:cost', id: 'cost', label: 'Token cost' });
-  out.push({ kind: 'header', key: 'h:scopes', label: 'SCOPES' });
-  for (const g of groupsOf(r)) out.push({ kind: 'scope', key: `scope:${g.key}`, group: g });
   return out;
 }
 
-export const selectable = (e: Entry) => e.kind !== 'header';
+/** Scope entries are opened from Browse, not listed in the sidebar. */
+export function scopeEntries(r: ScanResult): Entry[] {
+  return groupsOf(r).map((g) => ({ kind: 'scope', key: `scope:${g.key}`, group: g }));
+}
+
+export const selectable = (e: Entry) => e.kind !== 'header' && e.kind !== 'gap';
 
 function flagMap(r: ScanResult): Map<string, Finding> {
   const m = new Map<string, Finding>();
@@ -150,6 +157,18 @@ export function rowsFor(entry: Entry | undefined, r: ScanResult, pairs: Pair[], 
         };
       })
       .filter((row) => match(row.primary, row.secondary, row.tag, row.item?.description));
+  }
+  if (entry.kind === 'view' && entry.id === 'browse') {
+    return groupsOf(r)
+      .map((g): Row => ({
+        key: `scope:${g.key}`,
+        primary: g.label,
+        secondary: [g.memories && plural(g.memories, 'memory', 'memories'), g.skills && plural(g.skills, 'skill')].filter(Boolean).join(' · '),
+        tag: g.gone ? 'folder gone' : `${g.tokens.toLocaleString('en-US')} tk`,
+        color: g.gone ? CATEGORY_COLOR.stale! : '',
+        group: g,
+      }))
+      .filter((row) => match(row.primary, row.secondary));
   }
   if (entry.kind === 'view' && entry.id === 'checks') {
     return pairs
