@@ -47,6 +47,7 @@ const TOUR = [
 ];
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
+const COLLAPSE_AFTER = 20;
 
 function pendingPairs(ctx: ScanContext, r: ScanResult): Pair[] {
   try {
@@ -69,7 +70,7 @@ export function App(props: AppProps) {
   const [refreshing, setRefreshing] = useState(!props.initialResult);
   const [fresh, setFresh] = useState(Boolean(props.initialResult));
   const [pairs, setPairs] = useState<Pair[]>(first?.pairs ?? []);
-  const [entryKey, setEntryKey] = useState(props.initialUi?.entryKey ?? 'cat:all');
+  const [entryKey, setEntryKey] = useState(props.initialUi?.entryKey ?? 'cat:stale');
   const [focus, setFocus] = useState<Focus>(props.initialUi?.focus ?? 'main');
   const [cursor, setCursor] = useState(props.initialUi?.cursor ?? 0);
   const [offset, setOffset] = useState(0);
@@ -137,7 +138,7 @@ export function App(props: AppProps) {
   const flat = useMemo(() => (result ? rowsFor(entry, result, pairs, query, archived) : []), [entry, result, pairs, query, archived]);
   // Findings lists group into per-project folders; long lists start collapsed.
   const foldersOn = entry?.kind === 'category';
-  const collapseByDefault = flat.length > 20 && !query;
+  const collapseByDefault = flat.length > COLLAPSE_AFTER && !query;
   const rows = useMemo(
     () => (foldersOn ? treeRows(flat, (k) => (flipped.has(k) ? !collapseByDefault : collapseByDefault)) : flat),
     [flat, foldersOn, flipped, collapseByDefault],
@@ -147,7 +148,7 @@ export function App(props: AppProps) {
   const isCost = entry?.kind === 'view' && entry.id === 'cost';
 
   const showSidebar = !sidebarHidden && cols >= 72;
-  const sw = showSidebar ? (cols >= 120 ? 34 : cols >= 96 ? 30 : 26) : 0;
+  const sw = showSidebar ? 24 : 0;
   const mw = cols - sw;
   // One spare row: some terminals scroll when the last line is written.
   const bodyH = termRows - 3;
@@ -427,7 +428,7 @@ export function App(props: AppProps) {
   const commands: Command[] = [
     { name: 'quit', aliases: ['q', 'q!', 'qa', 'wq', 'x'], title: 'Quit', run: () => exit() },
     { name: 'rescan', aliases: ['r', 'scan', 'e!'], title: 'Rescan everything', run: doRescan },
-    { name: 'all', title: 'All findings', run: () => goEntry('cat:all') },
+    { name: 'stale', title: 'Stale findings', run: () => goEntry('cat:stale') },
     { name: 'checks', title: 'Contradiction checks', run: () => goEntry('view:checks') },
     { name: 'cost', title: 'Token cost', run: () => goEntry('view:cost') },
     { name: 'help', aliases: ['h'], title: 'Keys and commands', run: () => setOverlay({ kind: 'help' }) },
@@ -476,16 +477,25 @@ export function App(props: AppProps) {
     }
     for (const e of scopes) if (e.kind === 'scope') add(e.group.label, 'scope', () => goEntry(e.key));
     if (q) {
-      const all = rowsFor(entries.find((e) => e.key === 'cat:all'), result, pairs, '');
-      all.forEach((r, i) =>
-        add(`${r.primary} — ${r.finding?.title ?? ''}`, r.tag, () => {
-          setEntryKey('cat:all');
-          setQuery('');
-          setSelected(new Set());
-          setCursor(i);
-          setFocus('main');
-        }),
-      );
+      for (const e of entries) {
+        if (e.kind !== 'category') continue;
+        const findings = rowsFor(e, result, pairs, '');
+        for (const r of findings) {
+          add(`${r.primary} — ${r.finding?.title ?? ''}`, r.tag, () => {
+            const opened = new Set<string>();
+            const visible = treeRows(findings, (key, children) => {
+              if (findings.length <= COLLAPSE_AFTER) return false;
+              if (!children.some((child) => child.key === r.key)) return true;
+              opened.add(key);
+              return false;
+            });
+            goEntry(e.key);
+            setFlipped(opened);
+            setCursor(visible.findIndex((row) => row.key === r.key));
+            setFocus('main');
+          });
+        }
+      }
       for (const e of scopes) {
         if (e.kind !== 'scope') continue;
         e.group.items.forEach((it) =>
@@ -753,7 +763,7 @@ export function App(props: AppProps) {
       ? 'j/k move · l open · [ ] switch · ^p palette · : command · ? help'
       : focus === 'detail'
         ? picking
-          ? 'j/k pick file · d delete · a archive · m move · e edit · h back'
+          ? 'j/k pick file · e edit · h back'
           : 'j/k scroll · d delete · a archive · m move · i ignore · e edit · h back'
         : entry?.kind === 'view' && entry.id === 'archived'
           ? 'R restore · e open · space select · / search'
@@ -902,7 +912,6 @@ export function App(props: AppProps) {
               width={listW}
               height={listH}
               empty={emptyText}
-              grouped={entry?.kind === 'category' && entry.id === 'all' && !query}
             />
           )}
           <Doc

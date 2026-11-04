@@ -52,7 +52,11 @@ describe('full-screen UI', () => {
     expect(f).toContain('Browse all');
     expect(f).toContain('Preview');
     expect(f).toContain('NORMAL');
+    expect(f).toMatch(/╭─ Stale /);
     expect(f).toContain('old-api');
+    expect(f).toContain('which no longer exists');
+    expect(f).not.toContain('TYPE');
+    expect(f).not.toMatch(/╭─ All |●|◆|✦|▤/);
   });
 
   it('deletes after confirming, then undoes', async () => {
@@ -104,7 +108,8 @@ describe('full-screen UI', () => {
   it('opens detail with l and hands files to the editor with e', async () => {
     const { press, frame, edits, stale } = await app();
     await press('/', ...'old-api', KEY.enter, 'l');
-    expect(frame()).toContain('WHY FLAGGED');
+    expect(frame()).toContain('Refers to 1 path');
+    expect(frame()).not.toContain('WHY FLAGGED');
     await press('e');
     expect(edits).toEqual([[stale]]);
   });
@@ -134,9 +139,24 @@ describe('full-screen UI', () => {
     const first = fx.memory(gone, 'first-note.md', 'First note for the old project.');
     const second = fx.memory(gone, 'second-note.md', 'Second note for the old project.');
     const { press, frame } = await app();
-    await press('/', ...'2 memories', KEY.enter, 'l');
+    await press('/', ...'old-project', KEY.enter);
+    expect(frame()).toContain('Project folder is missing');
+    expect(frame()).toMatch(/old-project +~ +│/);
+    expect(frame()).not.toContain('2 memories');
+    expect(frame()).toContain('first-note');
+    expect(frame()).toContain('second-note');
+    expect(frame()).not.toContain('File 1 of 2');
+    expect(frame()).not.toContain('First note for the old project.');
+    expect(frame()).not.toContain('.claude/projects');
+    await press('l');
+    expect(frame()).toContain('~/old-project');
+    expect(frame()).not.toMatch(/project gone|WHY FLAGGED|was not found on disk/);
     expect(frame()).toContain('j/k pick');
-    await press('j', 'd');
+    expect(frame()).toMatch(/first-note +d delete/);
+    expect(frame()).not.toMatch(/second-note +d delete/);
+    await press('j');
+    expect(frame()).toMatch(/second-note +d delete/);
+    await press('d');
     expect(frame()).toContain('Apply 1 change?');
     expect(frame()).toContain('second-note');
     await press('y');
@@ -165,13 +185,16 @@ describe('full-screen UI', () => {
     for (let i = 0; i < 22; i++) fx.memory(repo, `n${i}.md`, `Note ${i} points at \`src/gone/f${i}.ts\` in the repo.`);
     const { press, frame } = await app();
     expect(frame()).toContain('▸');
-    expect(frame()).toContain('22 findings');
     // Move the cursor onto the ~/mono folder, then open it.
-    for (let i = 0; i < 10 && !frame().split('\n').some((l) => l.includes('▌') && l.includes('~/mono')); i++) await press('j');
+    for (let i = 0; i < 10 && !frame().split('\n').some((l) => /▌ ▸ mono +~ +│/.test(l)); i++) await press('j');
+    expect(frame()).toMatch(/▌ ▸ mono +~ +│/);
+    expect(frame()).toContain('22 FINDINGS');
     await press(KEY.enter);
     expect(frame()).toContain('▾');
-    expect(frame()).toContain('└');
+    expect(frame()).toMatch(/│ {5}n10 +│/);
     await press('z', 'M');
-    expect(frame()).not.toContain('└');
+    expect(frame()).not.toMatch(/│ {5}n10 +│/);
+    await press(KEY.ctrlP, ...'n0', KEY.enter);
+    expect(frame()).toMatch(/▌ +n0 +│/);
   });
 });

@@ -218,6 +218,7 @@ const SHOWN_HOME = '/home/demo';
 
 interface Run {
   firstRun?: boolean;
+  entryKey?: string;
   /** Row the list cursor starts on. */
   cursor?: number;
 }
@@ -233,7 +234,7 @@ async function press(keys: Keys, ...input: string[]) {
 async function goTo(keys: Keys, term: Term, name: string) {
   const rows = plain(term.frame).split('\n')
     .map((line) => line.split('│')[3] ?? '')
-    .filter((line) => line.trim() && !line.trimStart().startsWith('━━') && !line.trimStart().startsWith('NAME'));
+    .filter((line) => line.trim() && !line.trimStart().startsWith('NAME'));
   const at = rows.findIndex((line) => line.includes('▌'));
   const want = rows.findIndex((line) => line.includes(name));
   if (at < 0 || want < 0) throw new Error(`Row not found on screen: ${name}`);
@@ -250,7 +251,7 @@ async function captureScreens(cols: number, suffix: string) {
     const keys = new Keys();
     const ctx = fx.ctx();
     const result = await scan(ctx);
-    const initialUi = { entryKey: 'cat:all', focus: 'main' as const, cursor: run.cursor ?? 0, sidebarHidden: false };
+    const initialUi = { entryKey: run.entryKey ?? 'cat:stale', focus: 'main' as const, cursor: run.cursor ?? 0, sidebarHidden: false };
     const app = render(
       <App
         ctx={ctx}
@@ -304,7 +305,7 @@ async function captureScreens(cols: number, suffix: string) {
       launch = await goTo(k, t, 'launch-checklist');
       shot('main', t, 'launch-checklist');
       await press(k, 'l');
-      shot('detail', t, 'WHY FLAGGED');
+      shot('detail', t, 'which ended');
     });
     await session({ firstRun: true, cursor: launch }, async (k, t) => {
       shot('welcome', t);
@@ -323,7 +324,7 @@ async function captureScreens(cols: number, suffix: string) {
       await press(k, '?');
       shot('help', t);
     });
-    await session({}, async (k, t) => {
+    await session({ entryKey: 'cat:scope' }, async (k, t) => {
       await goTo(k, t, 'parcel-api-conventions');
       await press(k, 'm');
       shot('move', t, 'Move to another project');

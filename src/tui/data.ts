@@ -2,13 +2,12 @@ import { agentName } from '../adapters/index.js';
 import { CATEGORIES, itemsOf, subject } from '../cli/format.js';
 import type { Archived, Pair } from '../core/state.js';
 import type { Category, Finding, Item, ScanResult } from '../core/types.js';
-import { CATEGORY_COLOR, theme } from './theme.js';
 import { plural } from '../core/text.js';
 
 /** Sidebar entries. Headers are labels; everything else can be selected. */
 export type Entry =
   | { kind: 'header'; key: string; label: string }
-  | { kind: 'category'; key: string; id: Category | 'all'; label: string; count: number; color: string }
+  | { kind: 'category'; key: string; id: Category; label: string; count: number }
   | { kind: 'scope'; key: string; group: Group }
   | { kind: 'view'; key: string; id: 'cost' | 'checks' | 'browse' | 'archived'; label: string; badge?: number }
   | { kind: 'gap'; key: string };
@@ -30,18 +29,14 @@ export interface Row {
   primary: string;
   secondary: string;
   tag: string;
-  color: string;
   finding?: Finding;
   item?: Item;
   pair?: Pair;
   group?: Group;
   archived?: Archived;
-  /** memory, skill, instructions, index, scope, pair, folder: picks the row's icon. */
-  kind?: string;
   folder?: Folder;
   /** Indent level: 1 for rows inside a folder. */
   depth?: number;
-  category?: string;
 }
 
 export const RULE_LABEL: Record<string, string> = {
@@ -108,10 +103,11 @@ export function groupsOf(r: ScanResult): Group[] {
 
 export function sidebarEntries(r: ScanResult, pairs: Pair[], archived: Archived[] = []): Entry[] {
   const out: Entry[] = [{ kind: 'header', key: 'h:findings', label: 'FINDINGS' }];
-  out.push({ kind: 'category', key: 'cat:all', id: 'all', label: 'All', count: r.findings.length, color: CATEGORY_COLOR.all! });
   for (const c of CATEGORIES) {
     const count = r.findings.filter((f) => f.category === c.id).length;
-    if (count) out.push({ kind: 'category', key: `cat:${c.id}`, id: c.id, label: c.label, count, color: CATEGORY_COLOR[c.id]! });
+    if (count || c.id === 'stale') {
+      out.push({ kind: 'category', key: `cat:${c.id}`, id: c.id, label: c.label, count });
+    }
   }
   out.push({ kind: 'gap', key: 'g:1' }, { kind: 'header', key: 'h:views', label: 'VIEWS' });
   out.push({ kind: 'view', key: 'view:browse', id: 'browse', label: 'Browse all', badge: groupsOf(r).length });
@@ -139,23 +135,15 @@ export function rowsFor(entry: Entry | undefined, r: ScanResult, pairs: Pair[], 
   const q = query.toLowerCase();
   const match = (...parts: (string | undefined)[]) => !q || parts.join(' ').toLowerCase().includes(q);
   if (entry.kind === 'category') {
-    const byId = new Map(r.items.map((i) => [i.id, i]));
-    const order = new Map(CATEGORIES.map((c, i) => [c.id, i]));
     return r.findings
-      .filter((f) => entry.id === 'all' || f.category === entry.id)
-      // Group by category (stable), so the All view reads as sections.
-      .map((f, i) => ({ f, i }))
-      .sort((a, b) => (order.get(a.f.category) ?? 0) - (order.get(b.f.category) ?? 0) || a.i - b.i)
-      .map(({ f }): Row => {
+      .filter((f) => f.category === entry.id)
+      .map((f): Row => {
         const { name, scope } = subject(f, r);
-        const first = byId.get(f.itemIds[0] ?? '');
         return {
-          kind: f.itemIds.length === 2 && ['similar', 'contradiction', 'duplicate-checked', 'skill-overlap'].includes(f.rule) ? 'pair' : first?.kind,
           key: f.id,
           primary: name || f.title,
           secondary: scope,
           tag: RULE_LABEL[f.rule] ?? f.rule,
-          color: CATEGORY_COLOR[f.category] ?? '',
           finding: f,
         };
       })
@@ -167,27 +155,23 @@ export function rowsFor(entry: Entry | undefined, r: ScanResult, pairs: Pair[], 
       .map((it): Row => {
         const f = flags.get(it.id);
         return {
-          kind: it.kind,
           key: it.id,
           primary: it.name,
-          secondary: it.kind === 'memory' ? '' : it.kind,
+          secondary: '',
           tag: f ? RULE_LABEL[f.rule] ?? f.rule : '✓',
-          color: f ? CATEGORY_COLOR[f.category] ?? '' : '',
           finding: f,
           item: it,
         };
       })
-      .filter((row) => match(row.primary, row.secondary, row.tag, row.item?.description));
+      .filter((row) => match(row.primary, row.item?.kind, row.tag, row.item?.description));
   }
   if (entry.kind === 'view' && entry.id === 'browse') {
     return groupsOf(r)
       .map((g): Row => ({
-        kind: 'scope',
         key: `scope:${g.key}`,
         primary: g.label,
         secondary: [g.memories && plural(g.memories, 'memory', 'memories'), g.skills && plural(g.skills, 'skill')].filter(Boolean).join(' · '),
         tag: g.gone ? 'folder gone' : `${g.tokens.toLocaleString('en-US')} tk`,
-        color: g.gone ? CATEGORY_COLOR.stale! : '',
         group: g,
       }))
       .filter((row) => match(row.primary, row.secondary));
@@ -195,19 +179,17 @@ export function rowsFor(entry: Entry | undefined, r: ScanResult, pairs: Pair[], 
   if (entry.kind === 'view' && entry.id === 'archived') {
     return [...archived]
       .reverse()
-      .map((a): Row => ({ kind: a.kind, key: a.id, primary: a.name, secondary: a.scope, tag: 'archived', color: theme.accent2, archived: a }))
+      .map((a): Row => ({ key: a.id, primary: a.name, secondary: a.scope, tag: 'archived', archived: a }))
       .filter((row) => match(row.primary, row.secondary));
   }
   if (entry.kind === 'view' && entry.id === 'checks') {
     return pairs
       .map(
         (p): Row => ({
-          kind: 'pair',
           key: p.id,
           primary: `${p.a.name} ↔ ${p.b.name}`,
           secondary: p.a.scope,
           tag: 'needs check',
-          color: CATEGORY_COLOR.contradiction!,
           pair: p,
         }),
       )
@@ -235,49 +217,38 @@ export interface Folder {
   collapsed: boolean;
 }
 
-/**
- * Turn a flat findings list into folders per project (inside each category, so the All
- * view's category bands still work). A project with one finding stays a plain row.
- */
-export function treeRows(rows: Row[], isCollapsed: (key: string, size: number) => boolean): Row[] {
+/** Group one category's findings by project. A single finding stays a plain row. */
+export function treeRows(rows: Row[], isCollapsed: (key: string, children: Row[]) => boolean): Row[] {
   const out: Row[] = [];
-  let i = 0;
-  while (i < rows.length) {
-    const cat = rows[i]!.finding?.category ?? '';
-    const block: Row[] = [];
-    while (i < rows.length && (rows[i]!.finding?.category ?? '') === cat) block.push(rows[i++]!);
-    const byScope = new Map<string, Row[]>();
-    for (const r of block) byScope.set(r.secondary, [...(byScope.get(r.secondary) ?? []), r]);
-    for (const [scope, kids] of byScope) {
-      if (kids.length === 1) {
-        out.push({ ...kids[0]!, category: cat, depth: 0 });
-        continue;
-      }
-      const key = `folder:${cat}:${scope}`;
-      const collapsed = isCollapsed(key, kids.length);
-      const rules = new Map<string, number>();
-      for (const k of kids) rules.set(k.tag, (rules.get(k.tag) ?? 0) + 1);
-      const folder: Folder = { key, label: scope || 'global', children: kids, collapsed };
-      out.push({
-        key,
-        kind: 'folder',
-        primary: `${scope || 'global'}`,
-        secondary: `${kids.length} findings`,
-        tag: rules.size === 1 ? [...rules.keys()][0]! : `${rules.size} kinds`,
-        color: kids[0]!.color,
-        category: cat,
-        folder,
-        depth: 0,
-      });
-      if (!collapsed) for (const k of kids) out.push({ ...k, category: cat, depth: 1 });
+  const byScope = new Map<string, Row[]>();
+  for (const row of rows) {
+    const children = byScope.get(row.secondary);
+    if (children) children.push(row);
+    else byScope.set(row.secondary, [row]);
+  }
+  for (const [scope, children] of byScope) {
+    const first = children[0]!;
+    if (children.length === 1) {
+      out.push(first);
+      continue;
     }
+    const key = `folder:${first.finding?.category}:${scope}`;
+    const collapsed = isCollapsed(key, children);
+    const label = scope || 'global';
+    out.push({
+      key,
+      primary: label,
+      secondary: '',
+      tag: '',
+      folder: { key, label, children, collapsed },
+    });
+    if (!collapsed) for (const child of children) out.push({ ...child, depth: 1 });
   }
   return out;
 }
 
 /** What each sidebar entry is, shown in the "About" box under the sidebar. */
 export const ENTRY_HELP: Record<string, string> = {
-  'cat:all': 'Every finding, grouped by type and project. Enter opens a project folder; d / a / i act on the row or the whole folder.',
   'cat:stale': 'Memories pointing at things that are gone or outdated: deleted projects or files, past events, skills that are no longer installed, old versions.',
   'cat:scope': 'Notes about one project saved in a parent folder like ~, and CLAUDE.md files that load into many projects. Some can be moved with m.',
   'cat:similar': 'Near-duplicate memories, and skills installed twice or overlapping. MindStash never merges; open both with e and keep one.',

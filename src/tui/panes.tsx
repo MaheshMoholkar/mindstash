@@ -1,8 +1,7 @@
 import { Box, Text } from 'ink';
+import { basename, dirname, isAbsolute } from 'node:path';
 import type { Entry, Row } from './data.js';
-import { CATEGORY_COLOR, CONFIDENCE, MODE_COLOR, theme } from './theme.js';
-import { CATEGORIES } from '../cli/format.js';
-import { KIND_GLYPH } from './doc.js';
+import { MODE_COLOR, theme } from './theme.js';
 import { fit, Lines, Panel, short, windowOf, wrap, type Line } from './ui.js';
 
 /** Keep the end of long paths: "…/api-server" is what tells them apart. */
@@ -47,33 +46,15 @@ export function Sidebar({
             </Text>
           );
         }
-        const [left, right, color, dim] =
-          e.kind === 'category'
-            ? [`● ${e.label}`, String(e.count), e.color, false]
-            : e.kind === 'view'
-              ? [`◇ ${e.label}`, e.badge ? String(e.badge) : '', theme.accent2, false]
-              : [
-                  `${e.group.gone ? '✕' : '›'} ${e.group.label}`,
-                  [e.group.memories && `${e.group.memories}m`, e.group.skills && `${e.group.skills}s`].filter(Boolean).join(' '),
-                  e.group.gone ? theme.muted : theme.fg,
-                  e.group.gone,
-                ];
-        const r = right ? ` ${right}` : '';
-        const label = fit(left, inner - r.length);
+        const label = e.kind === 'scope' ? e.group.label : e.label;
+        const count = e.kind === 'category' ? String(e.count) : e.kind === 'view' && e.badge ? String(e.badge) : '';
+        const activeBg = on && focused ? theme.cursor : undefined;
         return (
-          <Text
-            key={e.key}
-            backgroundColor={on && focused ? theme.cursor : undefined}
-            color={on ? theme.accent : dim ? theme.muted : undefined}
-            bold={on}
-          >
-            <Text color={color} backgroundColor={on && focused ? theme.cursor : undefined}>
-              {label.slice(0, 1)}
+          <Text key={e.key} backgroundColor={activeBg}>
+            <Text color={on ? theme.accent : theme.fg} backgroundColor={activeBg} bold={on}>
+              {fit(`${on ? '› ' : '  '}${label}`, inner - count.length - 1)}
             </Text>
-            <Text backgroundColor={on && focused ? theme.cursor : undefined}>{label.slice(1)}</Text>
-            <Text color={on ? theme.accent : e.kind === 'category' ? color : theme.warn} bold backgroundColor={on && focused ? theme.cursor : undefined}>
-              {r}
-            </Text>
+            <Text color={theme.muted} backgroundColor={activeBg}>{` ${count}`}</Text>
           </Text>
         );
       })}
@@ -100,7 +81,6 @@ export function List({
   width,
   height,
   empty,
-  grouped,
 }: {
   title: string;
   rows: Row[];
@@ -110,84 +90,38 @@ export function List({
   width: number;
   height: number;
   empty: string;
-  /** Insert a coloured band before each category (the All view). */
-  grouped?: boolean;
 }) {
   const inner = width - 4;
-  const tagW = Math.min(18, Math.max(16, Math.floor(inner * 0.18)));
-  const secW = Math.min(30, Math.max(0, Math.floor(inner * 0.26)));
-  const priW = Math.max(8, inner - 6 - secW - tagW - 2);
+  const scopeW = Math.min(30, Math.floor(inner / 3));
+  const nameW = inner - scopeW - 1;
   const pos = rows.length ? `${cursor + 1}/${rows.length}` : '0';
-
-  // Display lines: optional category bands, then rows. The cursor indexes rows only.
-  type D = { band: string; color: string; count: number } | { row: Row; index: number };
-  const display: D[] = [];
-  const counts = new Map<string, number>();
-  for (const r of rows) {
-    const c = r.category ?? r.finding?.category;
-    if (c) counts.set(c, (counts.get(c) ?? 0) + (r.folder ? r.folder.children.length : r.depth ? 0 : 1));
-  }
-  rows.forEach((row, index) => {
-    const cat = row.category ?? row.finding?.category;
-    const prev = rows[index - 1];
-    if (grouped && cat && cat !== (prev?.category ?? prev?.finding?.category)) {
-      const label = CATEGORIES.find((c) => c.id === cat)?.label ?? cat;
-      display.push({ band: label, color: CATEGORY_COLOR[cat] ?? theme.fg, count: counts.get(cat) ?? 0 });
-    }
-    display.push({ row, index });
-  });
-  const at = display.findIndex((d) => 'row' in d && d.index === cursor);
-  const visible = height - 3; // minus the column header
-  const { start, end } = windowOf(display.length, Math.max(0, at), visible);
+  const { start, end } = windowOf(rows.length, cursor, height - 3);
 
   return (
     <Panel title={title} right={pos} width={width} height={height} focused={focused}>
       <Text color={theme.muted} bold>
-        {fit('    NAME', priW + 6)} {fit('SCOPE', secW)} {fit('TYPE', tagW, 'right')}
+        {fit('  NAME', nameW)} {fit('SCOPE', scopeW)}
       </Text>
       {rows.length === 0 ? <Text color={theme.muted}>{fit(empty, inner)}</Text> : null}
-      {display.slice(start, end).map((d, i) => {
-        if ('band' in d) {
-          const t = ` ${d.band.toUpperCase()} · ${d.count} `;
-          return (
-            <Text key={`b${start + i}`}>
-              <Text color={d.color}>━━</Text>
-              <Text color={d.color} bold>
-                {t}
-              </Text>
-              <Text color={theme.rule}>{'─'.repeat(Math.max(0, inner - t.length - 2))}</Text>
-            </Text>
-          );
-        }
-        const { row } = d;
-        const on = d.index === cursor;
+      {rows.slice(start, end).map((row, i) => {
+        const on = start + i === cursor;
         const sel = selected.has(row.key) || Boolean(row.folder?.children.every((c) => selected.has(c.key)));
-        const conf = row.finding ? CONFIDENCE[row.finding.confidence] : row.pair ? theme.warn : theme.ok;
-        const k = row.folder
-          ? { g: row.folder.collapsed ? '▸' : '▾', color: theme.accent }
-          : KIND_GLYPH[row.kind ?? ''] ?? { g: '·', color: theme.muted };
-        const indent = row.depth ? '  └ ' : '';
         const bg = on ? (focused ? theme.cursor : theme.cursorDim) : sel ? theme.picked : undefined;
-        const tag = fit(row.tag, tagW - 2).trimEnd();
-        const tagColor = row.color || theme.ok;
+        const prefix = row.folder ? (row.folder.collapsed ? '▸ ' : '▾ ') : row.depth ? '  ' : '';
+        const nameWidth = nameW - prefix.length - 2;
+        const project = row.folder?.label ?? row.group?.label
+          ?? (row.finding?.rule === 'missing-project' && !row.item ? row.secondary : undefined);
+        const path = project && (project.startsWith('~/') || isAbsolute(project)) ? project : '';
+        const name = path ? basename(path) || path : project || row.primary;
+        const scope = row.depth ? '' : project ? (path && name !== path ? dirname(path) : '') : row.secondary;
         return (
           <Text key={row.key} backgroundColor={bg}>
-            <Text color={on ? theme.cursorFg : theme.accent} backgroundColor={bg}>{on ? '▌' : ' '}</Text>
-            <Text color={theme.accent2} backgroundColor={bg}>{sel ? '◆' : ' '}</Text>
-            <Text color={conf} backgroundColor={bg}>{row.finding || row.pair ? '●' : ' '}</Text>
-            <Text color={k.color} backgroundColor={bg}>{` ${k.g} `}</Text>
-            <Text color={theme.rule} backgroundColor={bg}>{indent}</Text>
-            <Text bold={on || sel || Boolean(row.folder)} color={on ? theme.cursorFg : row.folder ? theme.accent : theme.fg} backgroundColor={bg}>
-              {row.folder ? fitStart(row.primary, priW - indent.length) : fit(row.primary, priW - indent.length)}
+            <Text color={theme.cursorFg} backgroundColor={bg}>{on ? '▌' : ' '}{sel ? '✓' : ' '}</Text>
+            <Text color={on ? theme.cursorFg : row.folder ? theme.accent : theme.fg} backgroundColor={bg} bold={on || Boolean(row.folder)}>
+              {prefix}{fit(name, nameWidth)}
             </Text>
-            <Text backgroundColor={bg}> </Text>
-            <Text color={on ? theme.cursorInfo : theme.info} backgroundColor={bg}>
-              {/^[~/]/.test(row.secondary) ? fitStart(row.secondary, secW) : fit(row.secondary, secW)}
-            </Text>
-            <Text backgroundColor={bg}>{' '.repeat(Math.max(1, tagW - tag.length - 1))}</Text>
-            {/* Plain coloured text: a column of filled pills reads as one solid block. */}
-            <Text color={row.tag === '✓' ? theme.ok : tagColor} backgroundColor={bg} bold={on}>
-              {`${row.tag === '✓' ? '✓' : tag}  `}
+            <Text color={on ? theme.cursorInfo : theme.muted} backgroundColor={bg}>
+              {' '}{/^[~/]/.test(scope) ? fitStart(scope, scopeW) : fit(scope, scopeW)}
             </Text>
           </Text>
         );

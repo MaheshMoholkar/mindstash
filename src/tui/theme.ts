@@ -76,14 +76,7 @@ export function setTheme(preset = 'auto', env = process.env): void {
   }
 }
 
-export const CONFIDENCE = {
-  get high() { return theme.error; },
-  get medium() { return theme.warn; },
-  get low() { return theme.muted; },
-};
-
 export const CATEGORY_COLOR: Record<string, string> = {
-  get all() { return theme.fg; },
   get stale() { return theme.warn; },
   get scope() { return theme.info; },
   get similar() { return theme.accent2; },

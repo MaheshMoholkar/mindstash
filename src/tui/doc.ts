@@ -1,23 +1,21 @@
 import { agentName } from '../adapters/index.js';
 import { itemsOf } from '../cli/format.js';
+import { actionable } from '../core/scan.js';
 import type { Item, ScanResult } from '../core/types.js';
 import type { Row } from './data.js';
-import { RULE_LABEL } from './data.js';
-import { CATEGORY_COLOR, CONFIDENCE, theme } from './theme.js';
-import { fmt, pill, wrap, type Line, type Seg } from './ui.js';
+import { CATEGORY_COLOR, theme } from './theme.js';
+import { fit, fmt, pill, wrap, type Line } from './ui.js';
 
 const blank: Line = { text: '' };
 
-export const KIND_GLYPH: Record<string, { g: string; color: string }> = {
-  memory: { g: '◆', get color() { return theme.accent; } },
-  skill: { g: '✦', get color() { return theme.info; } },
-  instructions: { g: '▤', get color() { return theme.accent2; } },
-  index: { g: '≣', get color() { return theme.muted; } },
-  scope: { g: '▸', get color() { return theme.accent; } },
-  pair: { g: '⇄', get color() { return theme.error; } },
+const KIND_COLOR: Record<Item['kind'], string> = {
+  get memory() { return theme.accent; },
+  get skill() { return theme.info; },
+  get instructions() { return theme.accent2; },
+  get index() { return theme.muted; },
 };
 
-/** "WHY FLAGGED ──────────" */
+/** A section heading with a rule. */
 function section(title: string, width: number, color: string = theme.accent2): Line {
   const t = title.toUpperCase();
   return { text: t, segs: [{ text: t, color, bold: true }, { text: ' ' + '─'.repeat(Math.max(0, width - t.length - 1)), color: theme.rule }] };
@@ -45,14 +43,24 @@ export function editability(i: Item): string {
   return 'e edit';
 }
 
-function itemBlock(i: Item, width: number, maxLines: number): Line[] {
-  const k = KIND_GLYPH[i.kind] ?? KIND_GLYPH.memory!;
+function itemHeading(i: Item): Line {
+  return { text: i.name, bold: true };
+}
+
+function itemExcerpt(i: Item, width: number, maxLines: number): Line[] {
+  const text = wrap(body(i), width - 2);
+  const lines = text.slice(0, maxLines).map((text): Line => ({ text, gutter: true }));
+  if (text.length > maxLines) lines.push({ text: '…', dim: true });
+  return lines;
+}
+
+function itemBlock(i: Item, width: number, showName: boolean): Line[] {
   const out: Line[] = [
-    { text: i.name, segs: [{ text: `${k.g} `, color: k.color }, { text: i.name, bold: true, color: theme.fg }] },
+    ...(showName ? [itemHeading(i)] : []),
     {
       text: '',
       segs: [
-        pill(i.kind, k.color),
+        pill(i.kind, KIND_COLOR[i.kind]),
         { text: ' ' },
         { text: i.scope.label, color: theme.info },
         { text: ' · ', color: theme.muted },
@@ -64,20 +72,13 @@ function itemBlock(i: Item, width: number, maxLines: number): Line[] {
     },
   ];
   if (i.description && i.kind !== 'memory') out.push(...wrap(i.description, width).map((t) => ({ text: t, color: theme.info })));
-  const text = wrap(body(i), width - 2);
-  for (const t of text.slice(0, maxLines)) out.push({ text: t, gutter: true });
-  if (text.length > maxLines) out.push({ text: `… ${text.length - maxLines} more lines`, dim: true });
-  out.push(kv('file', i.path, theme.muted));
+  out.push(...itemExcerpt(i, width, 400));
   return out;
 }
 
-/**
- * Everything worth showing about a row, as lines. The preview shows the top of it; the
- * detail view scrolls through all of it.
- */
+/** A short preview or a scrollable detail view for the current row. */
 export function docFor(row: Row | undefined, r: ScanResult, width: number, full: boolean, fileCursor = 0): Line[] {
   if (!row) return [{ text: 'Nothing selected.', dim: true }];
-  const per = full ? 400 : 8;
 
   if (row.pair) {
     const p = row.pair;
@@ -100,19 +101,11 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
 
   if (row.folder) {
     const fo = row.folder;
-    const byTag = new Map<string, number>();
-    for (const c of fo.children) byTag.set(c.tag, (byTag.get(c.tag) ?? 0) + 1);
-    const out: Line[] = [
-      { text: '', segs: [{ text: fo.collapsed ? '▸ ' : '▾ ', color: theme.accent }, { text: fo.label, bold: true, color: theme.accent }] },
-      { text: '', segs: [...byTag].flatMap(([t, n]) => [pill(`${n} ${t}`, fo.children.find((c) => c.tag === t)?.color || theme.accent), { text: ' ' }]) },
-      blank,
-      section(`${fo.children.length} findings`, width),
-    ];
+    const out: Line[] = [section(`${fo.children.length} findings`, width)];
     for (const c of fo.children.slice(0, full ? 500 : 14)) {
-      out.push({ text: c.primary, segs: [{ text: '● ', color: c.color || theme.fg }, { text: c.primary }, { text: `  ${c.tag}`, color: theme.muted }] });
+      out.push({ text: c.primary, segs: [{ text: c.primary }, { text: `  ${c.tag}`, color: theme.muted }] });
     }
     if (fo.children.length > 14 && !full) out.push({ text: `… ${fo.children.length - 14} more`, dim: true });
-    out.push(blank, { text: `⏎ ${fo.collapsed ? 'open' : 'close'} · d / a / i act on all ${fo.children.length} (with confirm)`, color: theme.info });
     return out;
   }
   if (row.archived) {
@@ -146,8 +139,7 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
       section('Contents', width),
     ];
     for (const i of g.items.slice(0, full ? 500 : 12)) {
-      const k = KIND_GLYPH[i.kind] ?? KIND_GLYPH.memory!;
-      lines.push({ text: i.name, segs: [{ text: `${k.g} `, color: k.color }, { text: i.name }] });
+      lines.push({ text: i.name });
     }
     if (g.items.length > 12 && !full) lines.push({ text: `… ${g.items.length - 12} more`, dim: true });
     lines.push(blank, { text: 'Enter opens this scope · h goes back', dim: true });
@@ -156,70 +148,57 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
 
   const out: Line[] = [];
   const f = row.finding;
+  const items = row.item ? [row.item] : f ? itemsOf(f, r) : [];
   if (f) {
     const color = CATEGORY_COLOR[f.category] ?? theme.fg;
-    out.push(
-      ...wrap(f.title, width).map((t) => ({ text: t, bold: true, color })),
-      {
-        text: '',
-        segs: [
-          pill(RULE_LABEL[f.rule] ?? f.rule, color),
-          { text: ' ' },
-          pill(`${f.confidence} confidence`, CONFIDENCE[f.confidence]),
-          { text: '  ' },
-          { text: f.id, color: theme.muted },
-          ...(f.tokens ? [{ text: '  ' }, { text: `~${fmt(f.tokens)} tk/session`, color: theme.warn }] : []),
-        ],
-      },
-      blank,
-      section('Why flagged', width),
-    );
-    for (const reason of f.reasons) out.push(...bullets(reason, width));
-    if (f.moveTo) out.push(...bullets(`Move target: ${f.moveTo.label}`, width, '→', theme.info));
-    out.push(blank);
+    const missingProject = f.rule === 'missing-project';
+    const [firstReason, ...otherReasons] = f.reasons;
+    const title = missingProject
+      ? 'Project folder is missing'
+      : (full || f.title === row.primary ? firstReason : f.title) ?? f.title;
+    out.push(...wrap(title, width).map((text) => ({ text, bold: true, color })));
+    if (missingProject && (full || row.item) && items[0]) {
+      out.push(...wrap(items[0].scope.label, width).map((text) => ({ text, color: theme.info })));
+    }
+    if (full) {
+      if (!missingProject) for (const reason of otherReasons) out.push(...bullets(reason, width));
+      out.push({ text: `${f.confidence} confidence · ${f.id}`, dim: true });
+    }
+    if (items.length) out.push(blank);
+  }
+  if (!full) {
+    out.push(...items.slice(0, 6).filter((item) => item.name !== row.primary).map(itemHeading));
+    if (row.item && !f) out.push({ text: row.item.kind, dim: true });
+    if (items.length > 6) out.push({ text: `… ${items.length - 6} more files`, dim: true });
+    if (items.length === 1) out.push(...itemExcerpt(items[0]!, width, 3));
+    if (items.length > 1) out.push(blank, { text: 'Enter to pick a file', color: theme.info });
+    if (row.item && !f) out.push(blank, { text: '✓ Nothing flagged', color: theme.ok });
+    return out;
   }
 
-  const items = row.item ? [row.item] : f ? itemsOf(f, r) : [];
-  if (items.length > 1 && full) {
+  if (items.length > 1) {
     // File picker: j/k choose a file, d / a / e act on just that one.
     const at = Math.min(fileCursor, items.length - 1);
-    out.push(section(`${items.length} files`, width));
-    out.push({ text: '', segs: [{ text: 'j/k pick · d delete · a archive · m move · e edit', color: theme.muted }] });
-    const nw = String(items.length).length;
+    out.push(section('Files', width));
     items.forEach((i, n) => {
       const on = n === at;
-      const k = KIND_GLYPH[i.kind] ?? KIND_GLYPH.memory!;
+      const hint = on && actionable(i) ? '  d delete' : i.readOnly ? '  read-only' : '';
       out.push({
         text: i.name,
         cursor: on,
         bg: on ? theme.cursor : undefined,
         segs: [
-          { text: on ? '▌' : ' ', color: theme.accent },
-          { text: ` ${String(n + 1).padStart(nw, '0')} `, color: on ? theme.accent : theme.muted },
-          { text: `${k.g} `, color: k.color },
-          { text: i.name, color: on ? theme.cursorFg : theme.fg, bold: on },
-          ...(i.readOnly ? [{ text: '  read-only', color: theme.error }] : []),
-          { text: `  ~${fmt(i.loadTokens)} tk`, color: theme.muted },
-        ] as Seg[],
+          { text: on ? '▌ ' : '  ', color: theme.accent },
+          { text: fit(i.name, width - 2 - hint.length).trimEnd(), color: on ? theme.cursorFg : theme.fg, bold: on },
+          { text: hint, color: on ? theme.cursorInfo : theme.muted },
+        ],
       });
     });
-    out.push(blank, section(`Picked · ${at + 1} of ${items.length}`, width, theme.accent), ...itemBlock(items[at]!, width, 12));
+    const excerpt = itemExcerpt(items[at]!, width, 12);
+    if (excerpt.length) out.push(blank, ...excerpt);
     return out;
   }
-  if (items.length > 3) {
-    out.push(section(`${items.length} files`, width));
-    for (const i of items.slice(0, 6)) {
-      const k = KIND_GLYPH[i.kind] ?? KIND_GLYPH.memory!;
-      out.push({ text: i.name, segs: [{ text: `${k.g} `, color: k.color }, { text: i.name }] });
-    }
-    if (items.length > 6) out.push({ text: `… ${items.length - 6} more · Enter to pick one`, color: theme.info });
-    return out;
-  }
-  items.forEach((i, n) => {
-    if (n) out.push(blank);
-    if (f || items.length > 1) out.push(section(items.length > 1 ? `File ${n + 1} of ${items.length}` : 'File', width));
-    out.push(...itemBlock(i, width, per));
-  });
+  if (items[0]) out.push(...itemBlock(items[0], width, items[0].name !== row.primary));
   if (row.item && !f) out.push(blank, { text: '✓ Nothing flagged', color: theme.ok });
   return out;
 }

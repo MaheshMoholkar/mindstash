@@ -38,20 +38,28 @@ export async function runTui(ctx: ScanContext, selfCommand: string, preset?: str
   for (;;) {
     let edit: { paths: string[]; ui: Ui } | undefined;
     const refresh = new AbortController();
-    const app = render(
-      <App
-        ctx={{ ...ctx, now: new Date() }}
-        firstRun={firstRun}
-        selfCommand={selfCommand}
-        initialUi={ui}
-        refresh={() => refreshInChild(ctx, refresh.signal)}
-        onEdit={(paths, u) => {
-          edit = { paths, ui: u };
-        }}
-      />,
-      { alternateScreen: true },
-    );
-    try { await app.waitUntilExit(); } finally { refresh.abort(); }
+    const terminal = process.stdout;
+    // Save the shell's title and give both the window and tab a short app title.
+    if (terminal.isTTY) terminal.write('\x1b[22;0t\x1b]0;MindStash\x07');
+    try {
+      const app = render(
+        <App
+          ctx={{ ...ctx, now: new Date() }}
+          firstRun={firstRun}
+          selfCommand={selfCommand}
+          initialUi={ui}
+          refresh={() => refreshInChild(ctx, refresh.signal)}
+          onEdit={(paths, u) => {
+            edit = { paths, ui: u };
+          }}
+        />,
+        { alternateScreen: true },
+      );
+      await app.waitUntilExit();
+    } finally {
+      refresh.abort();
+      if (terminal.isTTY) terminal.write('\x1b[23;0t');
+    }
     if (!edit) return;
     // $EDITOR may carry flags ("code -w"), so run it through the shell.
     const editor = process.env.VISUAL || process.env.EDITOR || 'vi';
