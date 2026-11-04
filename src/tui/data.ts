@@ -36,6 +36,8 @@ export interface Row {
   pair?: Pair;
   group?: Group;
   archived?: Archived;
+  /** memory, skill, instructions, index, scope, pair: picks the row's icon. */
+  kind?: string;
 }
 
 export const RULE_LABEL: Record<string, string> = {
@@ -133,11 +135,18 @@ export function rowsFor(entry: Entry | undefined, r: ScanResult, pairs: Pair[], 
   const q = query.toLowerCase();
   const match = (...parts: (string | undefined)[]) => !q || parts.join(' ').toLowerCase().includes(q);
   if (entry.kind === 'category') {
+    const byId = new Map(r.items.map((i) => [i.id, i]));
+    const order = new Map(CATEGORIES.map((c, i) => [c.id, i]));
     return r.findings
       .filter((f) => entry.id === 'all' || f.category === entry.id)
-      .map((f): Row => {
+      // Group by category (stable), so the All view reads as sections.
+      .map((f, i) => ({ f, i }))
+      .sort((a, b) => (order.get(a.f.category) ?? 0) - (order.get(b.f.category) ?? 0) || a.i - b.i)
+      .map(({ f }): Row => {
         const { name, scope } = subject(f, r);
+        const first = byId.get(f.itemIds[0] ?? '');
         return {
+          kind: f.itemIds.length === 2 && ['similar', 'contradiction', 'duplicate-checked', 'skill-overlap'].includes(f.rule) ? 'pair' : first?.kind,
           key: f.id,
           primary: name || f.title,
           secondary: scope,
@@ -154,6 +163,7 @@ export function rowsFor(entry: Entry | undefined, r: ScanResult, pairs: Pair[], 
       .map((it): Row => {
         const f = flags.get(it.id);
         return {
+          kind: it.kind,
           key: it.id,
           primary: it.name,
           secondary: it.kind === 'memory' ? '' : it.kind,
@@ -168,6 +178,7 @@ export function rowsFor(entry: Entry | undefined, r: ScanResult, pairs: Pair[], 
   if (entry.kind === 'view' && entry.id === 'browse') {
     return groupsOf(r)
       .map((g): Row => ({
+        kind: 'scope',
         key: `scope:${g.key}`,
         primary: g.label,
         secondary: [g.memories && plural(g.memories, 'memory', 'memories'), g.skills && plural(g.skills, 'skill')].filter(Boolean).join(' · '),
@@ -180,13 +191,14 @@ export function rowsFor(entry: Entry | undefined, r: ScanResult, pairs: Pair[], 
   if (entry.kind === 'view' && entry.id === 'archived') {
     return [...archived]
       .reverse()
-      .map((a): Row => ({ key: a.id, primary: a.name, secondary: a.scope, tag: a.kind, color: '', archived: a }))
+      .map((a): Row => ({ kind: a.kind, key: a.id, primary: a.name, secondary: a.scope, tag: 'archived', color: '#bb9af7', archived: a }))
       .filter((row) => match(row.primary, row.secondary));
   }
   if (entry.kind === 'view' && entry.id === 'checks') {
     return pairs
       .map(
         (p): Row => ({
+          kind: 'pair',
           key: p.id,
           primary: `${p.a.name} ↔ ${p.b.name}`,
           secondary: p.a.scope,

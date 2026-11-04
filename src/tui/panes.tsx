@@ -1,12 +1,14 @@
 import { Text } from 'ink';
 import type { Entry, Row } from './data.js';
-import { CONFIDENCE, MODE_COLOR, theme } from './theme.js';
+import { CATEGORY_COLOR, CONFIDENCE, MODE_COLOR, theme } from './theme.js';
+import { CATEGORIES } from '../cli/format.js';
+import { KIND_GLYPH } from './doc.js';
 import { fit, Lines, Panel, short, windowOf, type Line } from './ui.js';
 
 /** Keep the end of long paths: "…/api-server" is what tells them apart. */
 const fitStart = (t: string, w: number) => (t.length > w && w > 1 ? '…' + t.slice(t.length - w + 1) : t.padEnd(w));
 
-const HILITE = '#292e42';
+const HILITE = theme.hilite;
 
 export function Sidebar({
   entries,
@@ -31,8 +33,11 @@ export function Sidebar({
         if (e.kind === 'gap') return <Text key={e.key}> </Text>;
         if (e.kind === 'header') {
           return (
-            <Text key={e.key} color={theme.muted} bold>
-              {fit(e.label, inner)}
+            <Text key={e.key}>
+              <Text color={theme.accent2} bold>
+                {e.label}
+              </Text>
+              <Text color={theme.rule}> {'─'.repeat(Math.max(0, inner - e.label.length - 1))}</Text>
             </Text>
           );
         }
@@ -48,7 +53,7 @@ export function Sidebar({
                   e.group.gone,
                 ];
         const r = right ? ` ${right}` : '';
-        const text = fit(left, inner - r.length) + r;
+        const label = fit(left, inner - r.length);
         return (
           <Text
             key={e.key}
@@ -56,14 +61,13 @@ export function Sidebar({
             color={on ? theme.accent : dim ? theme.muted : undefined}
             bold={on}
           >
-            {e.kind === 'category' && !on ? (
-              <>
-                <Text color={color}>●</Text>
-                {text.slice(1)}
-              </>
-            ) : (
-              text
-            )}
+            <Text color={color} backgroundColor={on && focused ? HILITE : undefined}>
+              {label.slice(0, 1)}
+            </Text>
+            <Text backgroundColor={on && focused ? HILITE : undefined}>{label.slice(1)}</Text>
+            <Text color={on ? theme.accent : e.kind === 'category' ? color : theme.warn} bold backgroundColor={on && focused ? HILITE : undefined}>
+              {r}
+            </Text>
           </Text>
         );
       })}
@@ -80,6 +84,7 @@ export function List({
   width,
   height,
   empty,
+  grouped,
 }: {
   title: string;
   rows: Row[];
@@ -89,34 +94,78 @@ export function List({
   width: number;
   height: number;
   empty: string;
+  /** Insert a coloured band before each category (the All view). */
+  grouped?: boolean;
 }) {
   const inner = width - 4;
-  const visible = height - 2;
-  const { start, end } = windowOf(rows.length, cursor, visible);
-  const tagW = Math.min(16, Math.max(12, Math.floor(inner * 0.18)));
+  const tagW = Math.min(18, Math.max(16, Math.floor(inner * 0.18)));
   const secW = Math.min(30, Math.max(0, Math.floor(inner * 0.26)));
-  const priW = Math.max(8, inner - 4 - secW - tagW - 2);
+  const priW = Math.max(8, inner - 6 - secW - tagW - 2);
   const pos = rows.length ? `${cursor + 1}/${rows.length}` : '0';
+
+  // Display lines: optional category bands, then rows. The cursor indexes rows only.
+  type D = { band: string; color: string; count: number } | { row: Row; index: number };
+  const display: D[] = [];
+  const counts = new Map<string, number>();
+  for (const r of rows) if (r.finding) counts.set(r.finding.category, (counts.get(r.finding.category) ?? 0) + 1);
+  rows.forEach((row, index) => {
+    const cat = row.finding?.category;
+    if (grouped && cat && cat !== rows[index - 1]?.finding?.category) {
+      const label = CATEGORIES.find((c) => c.id === cat)?.label ?? cat;
+      display.push({ band: label, color: CATEGORY_COLOR[cat] ?? theme.fg, count: counts.get(cat) ?? 0 });
+    }
+    display.push({ row, index });
+  });
+  const at = display.findIndex((d) => 'row' in d && d.index === cursor);
+  const visible = height - 3; // minus the column header
+  const { start, end } = windowOf(display.length, Math.max(0, at), visible);
+
   return (
     <Panel title={title} right={pos} width={width} height={height} focused={focused}>
+      <Text color={theme.muted} bold>
+        {fit('    NAME', priW + 6)} {fit('SCOPE', secW)} {fit('TYPE', tagW, 'right')}
+      </Text>
       {rows.length === 0 ? <Text color={theme.muted}>{fit(empty, inner)}</Text> : null}
-      {rows.slice(start, end).map((row, i) => {
-        const on = start + i === cursor;
+      {display.slice(start, end).map((d, i) => {
+        if ('band' in d) {
+          const t = ` ${d.band.toUpperCase()} · ${d.count} `;
+          return (
+            <Text key={`b${start + i}`}>
+              <Text color={d.color}>━━</Text>
+              <Text color={d.color} bold>
+                {t}
+              </Text>
+              <Text color={theme.rule}>{'─'.repeat(Math.max(0, inner - t.length - 2))}</Text>
+            </Text>
+          );
+        }
+        const { row } = d;
+        const on = d.index === cursor;
         const sel = selected.has(row.key);
-        const conf = row.finding ? CONFIDENCE[row.finding.confidence] : theme.ok;
+        const conf = row.finding ? CONFIDENCE[row.finding.confidence] : row.pair ? theme.warn : theme.ok;
+        const k = KIND_GLYPH[row.kind ?? ''] ?? { g: '·', color: theme.muted };
+        const bg = on && focused ? theme.hilite : undefined;
+        const tag = fit(row.tag, tagW - 2).trimEnd();
+        const tagColor = row.color || theme.ok;
         return (
-          <Text key={row.key} backgroundColor={on && focused ? HILITE : undefined}>
-            <Text color={theme.accent}>{on ? '▌' : ' '}</Text>
-            <Text color={theme.accent2}>{sel ? '◆' : ' '}</Text>
-            <Text color={row.finding || row.pair ? conf : theme.muted}>{row.finding || row.pair ? '●' : '·'}</Text>
-            <Text> </Text>
-            <Text bold={on} color={on ? theme.fg : undefined}>
+          <Text key={row.key} backgroundColor={bg}>
+            <Text color={theme.accent} backgroundColor={bg}>{on ? '▌' : ' '}</Text>
+            <Text color={theme.accent2} backgroundColor={bg}>{sel ? '◆' : ' '}</Text>
+            <Text color={conf} backgroundColor={bg}>{row.finding || row.pair ? '●' : ' '}</Text>
+            <Text color={k.color} backgroundColor={bg}>{` ${k.g} `}</Text>
+            <Text bold={on} color={on ? '#ffffff' : theme.fg} backgroundColor={bg}>
               {fit(row.primary, priW)}
             </Text>
-            <Text> </Text>
-            <Text color={theme.muted}>{/^[~/]/.test(row.secondary) ? fitStart(row.secondary, secW) : fit(row.secondary, secW)}</Text>
-            <Text> </Text>
-            <Text color={row.color || theme.ok}>{fit(row.tag, tagW, 'right')}</Text>
+            <Text backgroundColor={bg}> </Text>
+            <Text color={theme.info} backgroundColor={bg}>
+              {/^[~/]/.test(row.secondary) ? fitStart(row.secondary, secW) : fit(row.secondary, secW)}
+            </Text>
+            <Text backgroundColor={bg}>{' '.repeat(Math.max(1, tagW - tag.length - 1))}</Text>
+            {row.tag === '✓' ? (
+              <Text color={theme.ok} backgroundColor={bg}>{' ✓ '}</Text>
+            ) : (
+              <Text color={theme.ink} backgroundColor={tagColor} bold>{` ${tag} `}</Text>
+            )}
           </Text>
         );
       })}

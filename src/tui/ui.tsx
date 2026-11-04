@@ -125,19 +125,59 @@ export interface Line {
   /** The picked file in a multi-file finding (kept in view while scrolling). */
   cursor?: boolean;
   bg?: string;
+  /** Several differently styled pieces on one line. */
+  segs?: Seg[];
+}
+
+export interface Seg {
+  text: string;
+  color?: string;
+  bg?: string;
+  bold?: boolean;
+  dim?: boolean;
+}
+
+/** A coloured label: " missing file ". */
+export function pill(text: string, bg: string): Seg {
+  return { text: ` ${text} `, color: theme.ink, bg, bold: true };
+}
+
+/** Render segments clipped to `width`; a line background pads to the full width. */
+export function SegLine({ segs, width, bg }: { segs: Seg[]; width: number; bg?: string }) {
+  let room = width;
+  const parts = segs.map((s, j) => {
+    if (room <= 0) return null;
+    const t = s.text.length > room ? fit(s.text, room) : s.text;
+    room -= t.length;
+    return (
+      <Text key={j} color={s.color ?? (s.dim ? theme.muted : theme.fg)} backgroundColor={s.bg ?? bg} bold={s.bold}>
+        {t}
+      </Text>
+    );
+  });
+  return (
+    <Text wrap="truncate-end">
+      {parts}
+      {bg && room > 0 ? <Text backgroundColor={bg}>{' '.repeat(room)}</Text> : null}
+    </Text>
+  );
 }
 
 export function Lines({ lines, width }: { lines: Line[]; width: number }) {
   return (
     <>
-      {lines.map((l, i) => (
+      {lines.map((l, i) =>
+        l.segs ? (
+          <SegLine key={i} segs={l.segs} width={width} bg={l.bg} />
+        ) : (
         <Text key={i} wrap="truncate-end">
           {l.gutter ? <Text color={theme.border}>│ </Text> : null}
           <Text color={l.color ?? (l.dim ? theme.muted : theme.fg)} bold={l.bold} backgroundColor={l.bg}>
             {fit(l.text, l.gutter ? width - 2 : width).trimEnd() || ' '}
           </Text>
         </Text>
-      ))}
+        ),
+      )}
     </>
   );
 }
