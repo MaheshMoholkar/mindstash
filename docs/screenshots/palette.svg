@@ -38,21 +38,21 @@
 <text x="245.6" y="109" fill="#e0af68" font-weight="700">5</text>
 <text x="262.5" y="109" fill="#565f89">│</text>
 <text x="270.9" y="109" fill="#7aa2f7">│</text>
-<rect x="287.8" y="95" width="8.4" height="19" fill="#283457"/>
-<text x="287.8" y="109" fill="#7aa2f7">▌</text>
-<rect x="296.2" y="95" width="8.4" height="19" fill="#283457"/>
-<rect x="304.6" y="95" width="8.4" height="19" fill="#283457"/>
+<rect x="287.8" y="95" width="8.4" height="19" fill="#3d59a1"/>
+<text x="287.8" y="109" fill="#ffffff">▌</text>
+<rect x="296.2" y="95" width="8.4" height="19" fill="#3d59a1"/>
+<rect x="304.6" y="95" width="8.4" height="19" fill="#3d59a1"/>
 <text x="304.6" y="109" fill="#f7768e">●</text>
-<rect x="313.1" y="95" width="25.3" height="19" fill="#283457"/>
+<rect x="313.1" y="95" width="25.3" height="19" fill="#3d59a1"/>
 <text x="321.5" y="109" fill="#7aa2f7">◆</text>
-<rect x="338.3" y="95" width="210.8" height="19" fill="#283457"/>
+<rect x="338.3" y="95" width="210.8" height="19" fill="#3d59a1"/>
 <text x="338.3" y="109" fill="#ffffff" font-weight="700">2</text>
 <text x="355.2" y="109" fill="#ffffff" font-weight="700">memories</text>
-<rect x="549.1" y="95" width="8.4" height="19" fill="#283457"/>
-<rect x="557.5" y="95" width="143.3" height="19" fill="#283457"/>
-<text x="557.5" y="109" fill="#7dcfff">…ork/legacy-admin</text>
-<rect x="700.8" y="95" width="25.3" height="19" fill="#283457"/>
-<rect x="726.1" y="95" width="118.0" height="19" fill="#283457"/>
+<rect x="549.1" y="95" width="8.4" height="19" fill="#3d59a1"/>
+<rect x="557.5" y="95" width="143.3" height="19" fill="#3d59a1"/>
+<text x="557.5" y="109" fill="#e0e6ff">…ork/legacy-admin</text>
+<rect x="700.8" y="95" width="25.3" height="19" fill="#3d59a1"/>
+<rect x="726.1" y="95" width="118.0" height="19" fill="#3d59a1"/>
 <text x="726.1" y="109" fill="#e0af68" font-weight="700">project</text>
 <text x="793.6" y="109" fill="#e0af68" font-weight="700">gone</text>
 <text x="852.6" y="109" fill="#7aa2f7">│</text>
@@ -279,11 +279,11 @@
 <text x="18.0" y="546" fill="#565f89">╰────────────────────────────╯╰────────────────────────────────────────────────────────────────────╯</text>
 <rect x="18.0" y="551" width="67.4" height="19" fill="#7aa2f7"/>
 <text x="26.4" y="565" fill="#1a1b26" font-weight="700">NORMAL</text>
-<rect x="85.4" y="551" width="362.5" height="19" fill="#283457"/>
+<rect x="85.4" y="551" width="362.5" height="19" fill="#3d59a1"/>
 <text x="93.9" y="565" fill="#c0caf5">All</text>
 <text x="127.6" y="565" fill="#c0caf5">›</text>
 <text x="144.4" y="565" fill="#c0caf5">1/9</text>
-<rect x="447.9" y="551" width="185.5" height="19" fill="#283457"/>
+<rect x="447.9" y="551" width="185.5" height="19" fill="#3d59a1"/>
 <text x="456.4" y="565" fill="#7dcfff">Claude</text>
 <text x="515.4" y="565" fill="#7dcfff">78</text>
 <text x="540.7" y="565" fill="#7dcfff">tk/session</text>

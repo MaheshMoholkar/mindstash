@@ -175,12 +175,12 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
       out.push({
         text: i.name,
         cursor: on,
-        bg: on ? theme.hilite : undefined,
+        bg: on ? theme.cursor : undefined,
         segs: [
           { text: on ? '▌' : ' ', color: theme.accent },
           { text: ` ${String(n + 1).padStart(nw, '0')} `, color: on ? theme.accent : theme.muted },
           { text: `${k.g} `, color: k.color },
-          { text: i.name, color: on ? theme.fg : theme.fg, bold: on },
+          { text: i.name, color: on ? '#ffffff' : theme.fg, bold: on },
           ...(i.readOnly ? [{ text: '  read-only', color: theme.error }] : []),
           { text: `  ~${fmt(i.loadTokens)} tk`, color: theme.muted },
         ] as Seg[],

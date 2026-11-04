@@ -12,6 +12,9 @@ export const theme = {
   info: '#7dcfff',
   ink: '#1a1b26', // text on coloured pills
   hilite: '#283457',
+  cursor: '#3d59a1', // focused cursor row
+  cursorDim: '#2a3454', // cursor row when the list isn't focused
+  picked: '#3b2f5c', // rows selected with Space / V
 } as const;
 
 export const CONFIDENCE = { high: theme.error, medium: theme.warn, low: theme.muted } as const;

@@ -8,7 +8,7 @@ import { fit, Lines, Panel, short, windowOf, type Line } from './ui.js';
 /** Keep the end of long paths: "…/api-server" is what tells them apart. */
 const fitStart = (t: string, w: number) => (t.length > w && w > 1 ? '…' + t.slice(t.length - w + 1) : t.padEnd(w));
 
-const HILITE = theme.hilite;
+const HILITE = theme.cursor;
 
 export function Sidebar({
   entries,
@@ -144,20 +144,20 @@ export function List({
         const sel = selected.has(row.key);
         const conf = row.finding ? CONFIDENCE[row.finding.confidence] : row.pair ? theme.warn : theme.ok;
         const k = KIND_GLYPH[row.kind ?? ''] ?? { g: '·', color: theme.muted };
-        const bg = on && focused ? theme.hilite : undefined;
+        const bg = on ? (focused ? theme.cursor : theme.cursorDim) : sel ? theme.picked : undefined;
         const tag = fit(row.tag, tagW - 2).trimEnd();
         const tagColor = row.color || theme.ok;
         return (
           <Text key={row.key} backgroundColor={bg}>
-            <Text color={theme.accent} backgroundColor={bg}>{on ? '▌' : ' '}</Text>
+            <Text color={on ? '#ffffff' : theme.accent} backgroundColor={bg}>{on ? '▌' : ' '}</Text>
             <Text color={theme.accent2} backgroundColor={bg}>{sel ? '◆' : ' '}</Text>
             <Text color={conf} backgroundColor={bg}>{row.finding || row.pair ? '●' : ' '}</Text>
             <Text color={k.color} backgroundColor={bg}>{` ${k.g} `}</Text>
-            <Text bold={on} color={on ? '#ffffff' : theme.fg} backgroundColor={bg}>
+            <Text bold={on || sel} color={on ? '#ffffff' : theme.fg} backgroundColor={bg}>
               {fit(row.primary, priW)}
             </Text>
             <Text backgroundColor={bg}> </Text>
-            <Text color={theme.info} backgroundColor={bg}>
+            <Text color={on ? '#e0e6ff' : theme.info} backgroundColor={bg}>
               {/^[~/]/.test(row.secondary) ? fitStart(row.secondary, secW) : fit(row.secondary, secW)}
             </Text>
             <Text backgroundColor={bg}>{' '.repeat(Math.max(1, tagW - tag.length - 1))}</Text>
