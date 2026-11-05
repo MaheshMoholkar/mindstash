@@ -94,7 +94,7 @@ npm run dev -- scan
 npm run site:screens   # re-render the landing page's terminal screens from the real UI
 ```
 
-To regenerate the README screenshots from demo data on macOS, run `FORCE_COLOR=3 npx tsx scripts/screenshots.tsx`.
+After refreshing the site screens, run `npx tsx scripts/screenshots.tsx` to export the same terminal views as README PNGs. The export uses a local Google Chrome installation.
 
 Env: `CLAUDE_CONFIG_DIR` (default `~/.claude`), `CODEX_HOME` (default `~/.codex`), `MINDSTASH_HOME` (default `~/.mindstash`).
 
