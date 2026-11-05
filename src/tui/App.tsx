@@ -919,6 +919,7 @@ export function App(props: AppProps) {
             title={docTitle}
             lines={docLines}
             offset={focus === 'detail' || isCost ? offset : 0}
+            overflowHint={zoomed ? '… more below (j/k)' : '… more in detail'}
             focused={focus === 'detail' || (isCost && focus === 'main')}
             width={zoomed ? mw : prevW}
             height={docHeight}

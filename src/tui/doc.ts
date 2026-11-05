@@ -48,7 +48,7 @@ function itemHeading(i: Item): Line {
   return { text: i.name, bold: true };
 }
 
-function itemExcerpt(i: Item, width: number, maxLines: number): Line[] {
+function itemExcerpt(i: Item, width: number, maxLines = Infinity): Line[] {
   const text = wrap(body(i), width - 2);
   const lines = text.slice(0, maxLines).map((text): Line => ({ text, gutter: true }));
   if (text.length > maxLines) lines.push({ text: '…', dim: true });
@@ -102,10 +102,25 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
 
   if (row.folder) {
     const fo = row.folder;
+    const children = fo.children.slice(0, full ? 500 : 14);
+    const numberW = String(fo.children.length).length;
+    const issueW = Math.max('ISSUE'.length, ...children.map((child) => child.tag.length));
+    const nameW = Math.min(
+      Math.max('NAME'.length, ...children.map((child) => child.primary.length)),
+      width - numberW - issueW - 3,
+    );
     const out: Line[] = [section(`${fo.children.length} findings`, width)];
-    for (const c of fo.children.slice(0, full ? 500 : 14)) {
-      out.push({ text: c.primary, segs: [{ text: c.primary }, { text: `  ${c.tag}`, color: theme.muted }] });
-    }
+    out.push({ text: `${fit('#', numberW, 'right')} ${fit('NAME', nameW)}  ISSUE`, color: theme.muted, bold: true });
+    children.forEach((c, n) => {
+      out.push({
+        text: c.primary,
+        segs: [
+          { text: `${fit(String(n + 1), numberW, 'right')} `, color: theme.muted },
+          { text: fit(c.primary, nameW) },
+          { text: `  ${c.tag}`, color: theme.muted },
+        ],
+      });
+    });
     if (fo.children.length > 14 && !full) out.push({ text: `… ${fo.children.length - 14} more`, dim: true });
     return out;
   }
@@ -183,9 +198,9 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
     if (row.item && !f) out.push({ text: row.item.kind, dim: true });
     if (items.length > 6) out.push({ text: `… ${items.length - 6} more files`, dim: true });
     if (items.length === 1) {
-      const excerpt = itemExcerpt(items[0]!, width, 3);
+      const excerpt = itemExcerpt(items[0]!, width);
       if (f && excerpt.length) out.push(section('Excerpt', width));
-      out.push(...excerpt);
+      for (const line of excerpt) out.push(line);
     }
     if (items.length > 1) out.push(blank, { text: 'Enter to pick a file', color: theme.info });
     if (row.item && !f) out.push(blank, { text: '✓ Nothing flagged', color: theme.ok });
@@ -195,20 +210,22 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
   if (items.length > 1) {
     // File picker: j/k choose a file, d / a / e act on just that one.
     const at = Math.min(fileCursor, items.length - 1);
-    const actionWidth = 'read-only'.length;
-    const nameWidth = width - actionWidth - 4;
+    const numberW = String(items.length).length;
     out.push(section('Files', width));
     items.forEach((i, n) => {
       const on = n === at;
       const hint = on && actionable(i) ? 'd delete' : i.readOnly ? 'read-only' : '';
+      const suffix = hint ? ` · ${hint}` : '';
+      const name = fit(i.name, width - numberW - 3 - suffix.length).trimEnd();
       out.push({
         text: i.name,
         cursor: on,
         bg: on ? theme.cursor : undefined,
         segs: [
           { text: on ? '▌ ' : '  ', color: theme.accent },
-          { text: fit(i.name, nameWidth), color: on ? theme.cursorFg : theme.fg, bold: on },
-          { text: `  ${fit(hint, actionWidth)}`, color: on ? theme.cursorInfo : theme.muted },
+          { text: `${fit(String(n + 1), numberW, 'right')} `, color: on ? theme.cursorInfo : theme.muted },
+          { text: name, color: on ? theme.cursorFg : theme.fg, bold: on },
+          { text: suffix, color: on ? theme.cursorInfo : theme.muted },
         ],
       });
     });

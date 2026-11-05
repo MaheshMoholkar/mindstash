@@ -18,7 +18,12 @@ const KEY = { enter: '\r', esc: '\u001B', tab: '\t', ctrlP: '\u0010' };
 
 async function app(opts: { firstRun?: boolean; ui?: Ui } = {}) {
   const repo = fx.project('repo', { 'src/keep.ts': 'x' }, true);
-  const stale = fx.memory(repo, 'old-api.md', 'Old billing endpoints live in `src/api/v1/old.ts` for now.');
+  const stale = fx.memory(repo, 'old-api.md', [
+    'Old billing endpoints live in `src/api/v1/old.ts` for now.',
+    'Keep the old response format.',
+    'Use the existing billing fixtures.',
+    'Check the webhook contract.',
+  ].join('\n'));
   fx.memory(repo, 'a.md', 'Always run the full test suite with vitest before committing any change to the repo.');
   fx.memory(repo, 'b.md', 'Always run the full test suite with vitest before committing a change to this repo.');
   const skill = fx.skill(join(fx.claudeDir, 'skills'), 'old-helper', 'Helps with an old workflow');
@@ -56,6 +61,7 @@ describe('full-screen UI', () => {
     expect(f).toMatch(/# +NAME +SCOPE/);
     expect(f).toContain('old-api');
     expect(f).toContain('which no longer exists');
+    expect(f).toContain('Check the webhook contract.');
     expect(f).not.toContain('TYPE');
     expect(f).not.toMatch(/╭─ All |●|◆|✦|▤/);
   });
@@ -155,13 +161,12 @@ describe('full-screen UI', () => {
     expect(frame()).not.toMatch(/project gone|WHY FLAGGED|was not found on disk/);
     expect(frame()).toContain('j/k pick');
     expect(frame()).toMatch(/FILES[\s\S]+CONTENTS[\s\S]+First note for the old project/);
-    expect(frame()).toMatch(/first-note +d delete/);
-    expect(frame()).not.toMatch(/second-note +d delete/);
-    const actionColumn = frame().split('\n').find((line) => line.includes('d delete'))?.indexOf('d delete');
+    expect(frame()).toContain('▌ 1 first-note · d delete');
+    expect(frame()).toContain('2 second-note');
+    expect(frame()).not.toContain('second-note · d delete');
     await press('j');
-    expect(frame()).toMatch(/second-note +d delete/);
+    expect(frame()).toContain('▌ 2 second-note · d delete');
     expect(frame().match(/d delete/g)).toHaveLength(1);
-    expect(frame().split('\n').find((line) => line.includes('d delete'))?.indexOf('d delete')).toBe(actionColumn);
     await press('d');
     expect(frame()).toContain('Apply 1 change?');
     expect(frame()).toContain('second-note');
@@ -195,6 +200,10 @@ describe('full-screen UI', () => {
     for (let i = 0; i < 10 && !/▌ +\d+ ▸ mono +~ +│/.test(frame()); i++) await press('j');
     expect(frame()).toMatch(/▌ +\d+ ▸ mono +~ +│/);
     expect(frame()).toContain('22 FINDINGS');
+    const preview = frame().split('\n').filter((line) => /│ +\d+ n\d+ +missing file/.test(line));
+    expect(preview[0]).toMatch(/│ +1 n\d+ +missing file/);
+    expect(preview[1]).toMatch(/│ +2 n\d+ +missing file/);
+    expect(new Set(preview.map((line) => line.indexOf('missing file'))).size).toBe(1);
     await press(KEY.enter);
     expect(frame()).toContain('▾');
     expect(frame()).toMatch(/│ +3 {3}n10 +│/);

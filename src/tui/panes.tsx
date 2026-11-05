@@ -139,6 +139,7 @@ export function Doc({
   right,
   lines,
   offset,
+  overflowHint,
   focused,
   width,
   height,
@@ -147,6 +148,7 @@ export function Doc({
   right?: string;
   lines: Line[];
   offset: number;
+  overflowHint: string;
   focused: boolean;
   width: number;
   height: number;
@@ -162,7 +164,7 @@ export function Doc({
       height={height}
       focused={focused}
     >
-      <Lines lines={more ? [...shown.slice(0, -1), { text: '… more below (j/k)', dim: true }] : shown} width={width - 4} />
+      <Lines lines={more ? [...shown.slice(0, -1), { text: overflowHint, dim: true }] : shown} width={width - 4} />
     </Panel>
   );
 }
