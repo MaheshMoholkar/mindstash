@@ -14,7 +14,7 @@ import type { Finding, ScanContext, ScanResult } from '../core/types.js';
 import { costReport, itemsOf, scanReport, showFinding } from './format.js';
 import { installSkills, skillInstalled } from './skill.js';
 
-const VERSION = '1.0.2';
+const VERSION = '1.0.3';
 
 if (process.env.NO_COLOR) chalk.level = 0;
 

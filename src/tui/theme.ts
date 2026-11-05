@@ -16,6 +16,7 @@ const tokyoNight = {
   picked: '#3b2f5c', // rows selected with Space / V
   cursorFg: '#ffffff',
   cursorInfo: '#e0e6ff',
+  deleteFg: '#ff8080',
   paletteCursor: '#292e42',
 };
 
@@ -23,7 +24,7 @@ const light = {
   accent: '#194b9f', accent2: '#672a90', fg: '#202536', muted: '#525e78',
   border: '#6c7893', rule: '#818da5', ok: '#275b26', warn: '#764400', error: '#9e1d39',
   info: '#145573', ink: '#ffffff', hilite: '#dce6f8', cursor: '#c1d4f7', cursorDim: '#e0e9f9',
-  picked: '#eadcf5', cursorFg: '#182844', cursorInfo: '#23426c', paletteCursor: '#dce6f8',
+  picked: '#eadcf5', cursorFg: '#182844', cursorInfo: '#23426c', deleteFg: '#b3132d', paletteCursor: '#dce6f8',
 };
 
 const presets = {

@@ -214,9 +214,10 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
     out.push(section('Files', width));
     items.forEach((i, n) => {
       const on = n === at;
-      const hint = on && actionable(i) ? 'd delete' : i.readOnly ? 'read-only' : '';
-      const suffix = hint ? ` · ${hint}` : '';
-      const name = fit(i.name, width - numberW - 3 - suffix.length).trimEnd();
+      const deletable = on && actionable(i);
+      const hint = deletable ? 'd delete' : i.readOnly ? 'read-only' : '';
+      const gap = deletable ? '   ·   ' : hint ? ' · ' : '';
+      const name = fit(i.name, width - numberW - 3 - gap.length - hint.length).trimEnd();
       out.push({
         text: i.name,
         cursor: on,
@@ -225,7 +226,8 @@ export function docFor(row: Row | undefined, r: ScanResult, width: number, full:
           { text: on ? '▌ ' : '  ', color: theme.accent },
           { text: `${fit(String(n + 1), numberW, 'right')} `, color: on ? theme.cursorInfo : theme.muted },
           { text: name, color: on ? theme.cursorFg : theme.fg, bold: on },
-          { text: suffix, color: on ? theme.cursorInfo : theme.muted },
+          { text: gap, color: on ? theme.cursorInfo : theme.muted },
+          { text: hint, color: deletable ? theme.deleteFg : on ? theme.cursorInfo : theme.muted, bg: deletable ? theme.ink : undefined, bold: deletable },
         ],
       });
     });

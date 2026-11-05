@@ -1,7 +1,7 @@
 import { Box, Text, useApp, useInput } from 'ink';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { agentName } from '../adapters/index.js';
-import { costRows, itemsOf } from '../cli/format.js';
+import { itemsOf } from '../cli/format.js';
 import { installSkills, skillInstalled } from '../cli/skill.js';
 import { pending } from '../core/contradictions.js';
 import { baselines, cost } from '../core/cost.js';
@@ -12,13 +12,14 @@ import { loadCache, type ScanSnapshot } from '../core/cache.js';
 import { markSeen } from '../core/notify.js';
 import { plural, tildify } from '../core/text.js';
 import type { FixKind, ScanContext, ScanResult } from '../core/types.js';
+import { costLines } from './cost.js';
 import { ENTRY_HELP, pathsOf, rowsFor, scopeEntries, selectable, sidebarEntries, treeRows, type Entry, type Row } from './data.js';
 import { docFor, editability } from './doc.js';
 import { fuzzy, helpLines, Modal, paletteLines, type PaletteItem } from './overlays.js';
 import { CommandLine, Doc, List, Sidebar, StatusLine, type Mode } from './panes.js';
 import { theme } from './theme.js';
 import type { Focus, Message, Overlay, Ui } from './types.js';
-import { fmt, useSize, wrap, type Line } from './ui.js';
+import { fmt, useSize, wrap } from './ui.js';
 
 export interface AppProps {
   ctx: ScanContext;
@@ -161,19 +162,11 @@ export function App(props: AppProps) {
   const listH = threeCol ? bodyH : Math.max(6, Math.floor(bodyH * 0.45));
   const docW = (zoomed ? mw : prevW) - 4;
 
-  const costLines: Line[] = useMemo(() => {
-    if (!result || !isCost) return [];
-    return costRows(cost(result, ctx.home)).map((r) => ({
-      text: r.text,
-      bold: r.style === 'bold',
-      dim: r.style === 'dim',
-      color: r.style === 'bold' ? theme.accent : undefined,
-    }));
-  }, [result, isCost]);
+  const costReport = useMemo(() => result && isCost ? cost(result, ctx.home) : null, [result, isCost, ctx.home]);
 
   const docLines = useMemo(
-    () => (result ? (isCost ? costLines : docFor(row, result, docW, focus === 'detail', fileCursor)) : []),
-    [result, row, docW, focus, isCost, costLines, fileCursor],
+    () => (costReport ? costLines(costReport, docW) : result ? docFor(row, result, docW, focus === 'detail', fileCursor) : []),
+    [result, row, docW, focus, costReport, fileCursor],
   );
   const docHeight = zoomed || threeCol ? bodyH : bodyH - listH - previewGap;
   const maxOffset = Math.max(0, docLines.length - (docHeight - 2));
@@ -910,6 +903,10 @@ export function App(props: AppProps) {
               cursor={cur}
               selected={selected}
               focused={focus === 'main'}
+              canDelete={fresh && !refreshing && !!row && expand([row]).some((target) =>
+                (!selected.size || selected.has(target.key))
+                && (target.finding?.fixes.includes('delete') || (target.item && actionable(target.item))),
+              )}
               width={listW}
               height={listH}
               empty={emptyText}

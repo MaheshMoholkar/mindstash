@@ -60,6 +60,8 @@ describe('full-screen UI', () => {
     expect(f).toMatch(/╭─ Stale /);
     expect(f).toMatch(/# +NAME +SCOPE/);
     expect(f).toContain('old-api');
+    expect(f).toMatch(/▌ +\d+ old-api +~\/repo {3}d delete/);
+    expect(f.match(/d delete/g)).toHaveLength(1);
     expect(f).toContain('which no longer exists');
     expect(f).toContain('Check the webhook contract.');
     expect(f).not.toContain('TYPE');
@@ -100,6 +102,9 @@ describe('full-screen UI', () => {
     const { press, frame } = await app();
     await press(':', ...'cost', KEY.enter);
     expect(frame()).toContain('Token cost');
+    expect(frame()).toMatch(/Session baseline +Tokens/);
+    expect(frame()).toMatch(/Skill source +Skills +Tokens/);
+    expect(frame()).toMatch(/Project +Total +CLAUDE\.md +MEMORY\.md +Skills/);
     await press(':', ...'nope', KEY.enter);
     expect(frame()).toContain('Not a command: nope');
     await press(KEY.ctrlP, ...'similar');
@@ -148,24 +153,24 @@ describe('full-screen UI', () => {
     const { press, frame } = await app();
     await press('/', ...'old-project', KEY.enter);
     expect(frame()).toMatch(/project missing +high confidence/);
-    expect(frame()).toMatch(/old-project +~ +│/);
+    expect(frame()).toMatch(/old-project +~ {3}d delete +│/);
     expect(frame()).not.toContain('2 memories');
     expect(frame()).toContain('first-note');
     expect(frame()).toContain('second-note');
     expect(frame()).not.toContain('File 1 of 2');
     expect(frame()).not.toContain('First note for the old project.');
     expect(frame()).not.toContain('.claude/projects');
-    expect(frame()).not.toContain('d delete');
+    expect(frame().match(/d delete/g)).toHaveLength(1);
     await press('l');
     expect(frame()).toContain('~/old-project');
     expect(frame()).not.toMatch(/project gone|WHY FLAGGED|was not found on disk/);
     expect(frame()).toContain('j/k pick');
     expect(frame()).toMatch(/FILES[\s\S]+CONTENTS[\s\S]+First note for the old project/);
-    expect(frame()).toContain('▌ 1 first-note · d delete');
+    expect(frame()).toContain('▌ 1 first-note   ·   d delete');
     expect(frame()).toContain('2 second-note');
-    expect(frame()).not.toContain('second-note · d delete');
+    expect(frame()).not.toContain('second-note   ·   d delete');
     await press('j');
-    expect(frame()).toContain('▌ 2 second-note · d delete');
+    expect(frame()).toContain('▌ 2 second-note   ·   d delete');
     expect(frame().match(/d delete/g)).toHaveLength(1);
     await press('d');
     expect(frame()).toContain('Apply 1 change?');
@@ -197,8 +202,8 @@ describe('full-screen UI', () => {
     const { press, frame } = await app();
     expect(frame()).toContain('▸');
     // Move the cursor onto the ~/mono folder, then open it.
-    for (let i = 0; i < 10 && !/▌ +\d+ ▸ mono +~ +│/.test(frame()); i++) await press('j');
-    expect(frame()).toMatch(/▌ +\d+ ▸ mono +~ +│/);
+    for (let i = 0; i < 10 && !/▌ +\d+ ▸ mono +~ {3}d delete/.test(frame()); i++) await press('j');
+    expect(frame()).toMatch(/▌ +\d+ ▸ mono +~ {3}d delete +│/);
     expect(frame()).toContain('22 FINDINGS');
     const preview = frame().split('\n').filter((line) => /│ +\d+ n\d+ +missing file/.test(line));
     expect(preview[0]).toMatch(/│ +1 n\d+ +missing file/);
@@ -210,6 +215,6 @@ describe('full-screen UI', () => {
     await press('z', 'M');
     expect(frame()).not.toMatch(/│ +3 {3}n10 +│/);
     await press(KEY.ctrlP, ...'n0', KEY.enter);
-    expect(frame()).toMatch(/▌ +\d+ {3}n0 +│/);
+    expect(frame()).toMatch(/▌ +\d+ {3}n0 +d delete +│/);
   });
 });

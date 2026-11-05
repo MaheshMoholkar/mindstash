@@ -2,10 +2,7 @@ import { Box, Text } from 'ink';
 import { basename, dirname, isAbsolute } from 'node:path';
 import type { Entry, Row } from './data.js';
 import { MODE_COLOR, theme } from './theme.js';
-import { fit, Lines, Panel, short, windowOf, wrap, type Line } from './ui.js';
-
-/** Keep the end of long paths: "…/api-server" is what tells them apart. */
-const fitStart = (t: string, w: number) => (t.length > w && w > 1 ? '…' + t.slice(t.length - w + 1) : t.padEnd(w));
+import { fit, fitStart, Lines, Panel, short, windowOf, wrap, type Line } from './ui.js';
 
 
 export function Sidebar({
@@ -78,6 +75,7 @@ export function List({
   cursor,
   selected,
   focused,
+  canDelete,
   width,
   height,
   empty,
@@ -87,6 +85,7 @@ export function List({
   cursor: number;
   selected: Set<string>;
   focused: boolean;
+  canDelete: boolean;
   width: number;
   height: number;
   empty: string;
@@ -115,6 +114,10 @@ export function List({
         const path = project && (project.startsWith('~/') || isAbsolute(project)) ? project : '';
         const name = path ? basename(path) || path : project || row.primary;
         const scope = row.depth ? '' : project ? (path && name !== path ? dirname(path) : '') : row.secondary;
+        const deleteHint = on && focused && canDelete ? 'd delete' : '';
+        const gap = scope && deleteHint ? '   ' : '';
+        const scopeWidth = scopeW - gap.length - deleteHint.length;
+        const scopeText = (/^[~/]/.test(scope) ? fitStart(scope, scopeWidth) : fit(scope, scopeWidth)).trimEnd();
         return (
           <Text key={row.key} backgroundColor={bg}>
             <Text color={theme.cursorFg} backgroundColor={bg}>{on ? '▌' : ' '}{sel ? '✓' : ' '}</Text>
@@ -125,8 +128,10 @@ export function List({
               {prefix}{fit(name, nameWidth)}
             </Text>
             <Text color={on ? theme.cursorInfo : theme.muted} backgroundColor={bg}>
-              {' '}{/^[~/]/.test(scope) ? fitStart(scope, scopeW) : fit(scope, scopeW)}
+              {' '}{scopeText}{gap}
             </Text>
+            {deleteHint && <Text color={theme.deleteFg} backgroundColor={theme.ink} bold>{deleteHint}</Text>}
+            <Text backgroundColor={bg}>{' '.repeat(scopeWidth - scopeText.length)}</Text>
           </Text>
         );
       })}

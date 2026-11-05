@@ -31,6 +31,12 @@ export function fit(text: string, width: number, align: 'left' | 'right' = 'left
   return align === 'left' ? t.padEnd(width) : t.padStart(width);
 }
 
+/** Keep the end of long paths, where the project name usually is. */
+export function fitStart(text: string, width: number): string {
+  if (text.length > width) return width <= 1 ? fit(text, width) : '…' + text.slice(text.length - width + 1);
+  return text.padEnd(width);
+}
+
 /** Word-wrap each line to `width`, keeping list indents. */
 export function wrap(text: string, width: number): string[] {
   const w = Math.max(10, width);
