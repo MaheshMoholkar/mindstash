@@ -1,13 +1,14 @@
 /**
- * Renders README screenshots from a made-up demo setup (no real user data), as SVG.
- * Run: FORCE_COLOR=3 npx tsx scripts/screenshots.tsx
+ * Renders README PNG screenshots from a made-up demo setup (no real user data).
+ * Run on macOS: FORCE_COLOR=3 npx tsx scripts/screenshots.tsx
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { render } from 'ink-testing-library';
 import { App } from '../src/tui/App.js';
+import { setTheme } from '../src/tui/theme.js';
 import { scan } from '../src/core/scan.js';
 import { sanitizePath } from '../src/core/text.js';
 import type { ScanContext } from '../src/core/types.js';
@@ -19,8 +20,9 @@ const ctx: ScanContext = {
   claudeDir: join(home, '.claude'),
   codexDir: join(home, '.codex'),
   mindstashDir: join(home, '.mindstash'),
-  now: new Date(),
+  now: new Date('2026-11-05T00:00:00Z'),
 };
+setTheme('tokyo-night', {});
 
 const write = (p: string, c: string) => {
   mkdirSync(dirname(p), { recursive: true });
@@ -141,11 +143,11 @@ function svg(frame: string, title: string): string {
       x = e;
     }
   });
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(title)}">
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w * 2}" height="${h * 2}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(title)}">
 <rect width="${w}" height="${h}" rx="10" fill="#1a1b26"/>
 <circle cx="20" cy="18" r="6" fill="#f7768e"/><circle cx="40" cy="18" r="6" fill="#e0af68"/><circle cx="60" cy="18" r="6" fill="#9ece6a"/>
-<text x="${w / 2}" y="22" fill="#565f89" font-size="12" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">${esc(title)}</text>
-<g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" xml:space="preserve">
+<text x="${w / 2}" y="22" fill="#565f89" font-size="12" text-anchor="middle" font-family="Menlo">${esc(title)}</text>
+<g font-family="Menlo" font-size="14" xml:space="preserve">
 ${parts.join('\n')}
 </g>
 </svg>
@@ -162,16 +164,27 @@ const result = await scan(ctx);
 async function shot(name: string, title: string, keys: string[]) {
   const ui = render(<App ctx={ctx} firstRun={false} selfCommand="mindstash" initialResult={result} onEdit={() => {}} />);
   await tick();
+  Object.defineProperty(ui.stdout, 'columns', { value: 120 });
+  ui.stdout.emit('resize');
+  await tick();
   for (const k of keys) {
     ui.stdin.write(k);
     await tick();
   }
-  writeFileSync(join(out, `${name}.svg`), svg(ui.lastFrame() ?? '', title));
+  const frame = ui.lastFrame();
   ui.unmount();
+  if (!frame) throw new Error(`No terminal frame captured for ${name}`);
+  const source = join(root, `${name}.svg`);
+  writeFileSync(source, svg(frame, title));
+  execFileSync('sips', ['-s', 'format', 'png', source, '--out', join(out, `${name}.png`)]);
   console.log('wrote', name);
 }
 
-await shot('main', 'npx mindstash', []);
-await shot('detail', 'npx mindstash · detail', ['j', 'l']);
-await shot('palette', 'npx mindstash · Ctrl-P', ['\u0010', 'r', 'a', 'i', 'l']);
+try {
+  await shot('main', 'npx mindstash', ['j', 'j']);
+  await shot('detail', 'npx mindstash · detail', ['l']);
+  await shot('palette', 'npx mindstash · Ctrl-P', ['\u0010', 'r', 'a', 'i', 'l']);
+} finally {
+  rmSync(root, { recursive: true, force: true });
+}
 process.exit(0);

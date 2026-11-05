@@ -6,12 +6,12 @@ Coding agents (Claude Code, Codex, Cursor, Gemini CLI, ...) save memories and lo
 
 Works with **Claude Code** and **Codex**. Needs Node 20+ and git (for backups).
 
-![MindStash terminal UI: findings list with preview](docs/screenshots/main.svg)
+![MindStash terminal UI: findings list with preview](docs/screenshots/main.png)
 
 <details><summary>More screenshots</summary>
 
-![Detail view: pick one file inside a finding](docs/screenshots/detail.svg)
-![Ctrl-P palette: jump to anything](docs/screenshots/palette.svg)
+![Detail view: pick one file inside a finding](docs/screenshots/detail.png)
+![Ctrl-P palette: jump to anything](docs/screenshots/palette.png)
 
 </details>
 
@@ -94,7 +94,7 @@ npm run dev -- scan
 npm run site:screens   # re-render the landing page's terminal screens from the real UI
 ```
 
-Screenshots: `FORCE_COLOR=3 npx tsx scripts/screenshots.tsx` (renders a made-up demo setup).
+To regenerate the README screenshots from demo data on macOS, run `FORCE_COLOR=3 npx tsx scripts/screenshots.tsx`.
 
 Env: `CLAUDE_CONFIG_DIR` (default `~/.claude`), `CODEX_HOME` (default `~/.codex`), `MINDSTASH_HOME` (default `~/.mindstash`).
 
