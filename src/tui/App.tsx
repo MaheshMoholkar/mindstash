@@ -149,7 +149,7 @@ export function App(props: AppProps) {
   const isCost = entry?.kind === 'view' && entry.id === 'cost';
 
   const showSidebar = !sidebarHidden && cols >= 72;
-  const sw = showSidebar ? 24 : 0;
+  const sw = showSidebar ? 30 : 0;
   const mw = cols - sw;
   // One spare row: some terminals scroll when the last line is written.
   const bodyH = termRows - 3;
