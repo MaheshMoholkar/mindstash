@@ -17,6 +17,7 @@ const { scan, scanSnapshot } = await import('../src/core/scan.js');
 const { setTheme } = await import('../src/tui/theme.js');
 setTheme('tokyo-night', {});
 const { App } = await import('../src/tui/App.js');
+const { wrap } = await import('../src/tui/ui.js');
 
 const ROWS = 32;
 const SITE = fileURLToPath(new URL('../site/index.html', import.meta.url));
@@ -281,6 +282,19 @@ async function captureScreens(cols: number, suffix: string) {
       // Live actions need the real paths. Mask them after rendering, including paths
       // the terminal clipped with an ellipsis, while preserving the pane width.
       let frame = term.frame;
+      if (name === 'confirm') {
+        const prefix = '~/.claude/projects/';
+        const [head, ...continuations] = wrap(prefix + sanitizePath(fx.home), Math.min(76, term.columns - 4) - 4);
+        if (head && continuations.length) {
+          const lines = frame.split('\n');
+          for (let i = 0; i < lines.length; i++) {
+            if (!lines[i]!.includes(head) || !continuations.every((part, j) => lines[i + j + 1]?.includes(part))) continue;
+            lines[i] = lines[i]!.replace(head, (prefix + sanitizePath(SHOWN_HOME)).padEnd(head.length));
+            continuations.forEach((part, j) => { lines[i + j + 1] = lines[i + j + 1]!.replace(part, ' '.repeat(part.length)); });
+          }
+          frame = lines.join('\n');
+        }
+      }
       for (const [source, shown] of [
         [fx.home, SHOWN_HOME],
         [sanitizePath(fx.home), sanitizePath(SHOWN_HOME)],
@@ -340,7 +354,7 @@ async function captureScreens(cols: number, suffix: string) {
       await press(k, ' ');
       await goTo(k, t, 'launch-checklist'); // Space moved the cursor on; keep the long note behind the dialog
       await press(k, 'd');
-      shot('confirm', t, 'Apply 2 changes?');
+      shot('confirm', t, 'Delete all 2 files?');
       await press(k, 'y');
       await tick(300);
       shot('applied', t, '2 changes applied');

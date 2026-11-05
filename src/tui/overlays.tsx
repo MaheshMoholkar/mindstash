@@ -1,6 +1,41 @@
 import { Box, Text } from 'ink';
+import { describe, type Action } from '../core/fix.js';
+import { plural, tildify } from '../core/text.js';
 import { theme } from './theme.js';
-import { fit, type Line } from './ui.js';
+import { fit, wrap, type Line } from './ui.js';
+
+export function deletionTitle(actions: Action[]): string {
+  const first = actions[0];
+  if (actions.length === 1 && first?.kind === 'delete-skill') {
+    return `Delete entire skill (${plural(first.files.length, 'file')})?`;
+  }
+  const files = actions.reduce((count, action) =>
+    count + (action.kind === 'delete' ? 1 : action.kind === 'delete-skill' ? action.files.length : 0), 0);
+  const links = actions.filter((action) => action.kind === 'unlink').length;
+  if (!files) return `Remove ${plural(links, 'broken link')}?`;
+  const target = files > 1 ? `all ${files} files` : '1 file';
+  return `Delete ${target}${links ? ` and remove ${plural(links, 'link')}` : ''}?`;
+}
+
+export function deletionLines(action: Action, home: string, width: number): Line[] {
+  const pathLines = (path: string, label = '') =>
+    wrap(label + tildify(path, home), width).map((text) => ({ text, dim: true }));
+  const summary = wrap(describe(action), width).map((text) => ({ text, bold: true }));
+  switch (action.kind) {
+    case 'delete':
+      return [
+        ...summary,
+        ...pathLines(action.target.path),
+        ...(action.target.indexPath ? pathLines(action.target.indexPath, 'Update index: ') : []),
+      ];
+    case 'delete-skill':
+      return [...summary, ...pathLines(action.dir)];
+    case 'unlink':
+      return [...summary, ...pathLines(action.indexPath)];
+    default:
+      return [];
+  }
+}
 
 /**
  * A centred dialog drawn over the UI. Every inner cell is written (lines are padded),

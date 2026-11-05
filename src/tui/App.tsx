@@ -15,7 +15,7 @@ import type { FixKind, ScanContext, ScanResult } from '../core/types.js';
 import { costLines } from './cost.js';
 import { ENTRY_HELP, pathsOf, rowsFor, scopeEntries, selectable, sidebarEntries, treeRows, type Entry, type Row } from './data.js';
 import { docFor, editability } from './doc.js';
-import { fuzzy, helpLines, Modal, paletteLines, type PaletteItem } from './overlays.js';
+import { deletionLines, deletionTitle, fuzzy, helpLines, Modal, paletteLines, type PaletteItem } from './overlays.js';
 import { CommandLine, Doc, List, Sidebar, StatusLine, type Mode } from './panes.js';
 import { theme } from './theme.js';
 import type { Focus, Message, Overlay, Ui } from './types.js';
@@ -506,6 +506,14 @@ export function App(props: AppProps) {
     return items.sort((a, b) => b.score - a.score).slice(0, 10);
   };
 
+  const modalWidth = Math.min(76, cols - 4);
+  const deleteLines = overlay?.kind === 'confirm'
+    ? overlay.plan.actions.flatMap((action) => deletionLines(action, ctx.home, modalWidth - 4))
+    : [];
+  const deletePageSize = termRows - 9;
+  const deleteMaxOffset = Math.max(0, deleteLines.length - deletePageSize);
+  const deleteOffset = overlay?.kind === 'confirm' ? clamp(overlay.offset ?? 0, 0, deleteMaxOffset) : 0;
+
   /* ---------------------------------------------------------------- keys */
 
   useInput((input, key) => {
@@ -525,7 +533,10 @@ export function App(props: AppProps) {
       setMessage(undefined);
       switch (overlay.kind) {
         case 'confirm':
-          if (input === 'y' || key.return) {
+          if (deleteMaxOffset > 0 && (input === 'j' || input === 'k' || key.downArrow || key.upArrow)) {
+            const step = input === 'j' || key.downArrow ? 1 : -1;
+            setOverlay({ ...overlay, offset: clamp(deleteOffset + step, 0, deleteMaxOffset) });
+          } else if (input === 'y' || (key.return && !deleteLines.length)) {
             const p = overlay.plan;
             if (!canFix()) return;
             setOverlay(null);
@@ -773,24 +784,31 @@ export function App(props: AppProps) {
 
   let modal: ReactNode = null;
   if (overlay) {
-    const mw2 = Math.min(76, cols - 4);
+    const mw2 = modalWidth;
     const inner = mw2 - 4;
     const common = { cols, rows: termRows, width: mw2 };
     if (overlay.kind === 'confirm') {
       const p = overlay.plan;
+      const changes = plural(p.actions.length, 'change');
       modal = (
         <Modal
           {...common}
-          title={`Apply ${plural(p.actions.length, 'change')}?`}
+          title={deleteLines.length ? deletionTitle(p.actions) : `Apply ${changes}?`}
           color={theme.error}
           lines={[
-            ...p.actions.slice(0, 12).map((a) => ({ text: describe(a) })),
-            ...(p.actions.length > 12 ? [{ text: `… and ${p.actions.length - 12} more`, dim: true }] : []),
+            ...(deleteLines.length
+              ? deleteLines.slice(deleteOffset, deleteOffset + deletePageSize)
+              : [
+                  ...p.actions.slice(0, 12).map((a) => ({ text: describe(a) })),
+                  ...(p.actions.length > 12 ? [{ text: `… and ${p.actions.length - 12} more`, dim: true }] : []),
+                ]),
             { text: '' },
             ...(p.tokensSaved ? [{ text: `Saves ~${fmt(p.tokensSaved)} tokens per session.`, color: theme.ok }] : []),
             { text: 'A backup is saved first. Undo any time with u.', dim: true },
           ]}
-          footer="y apply   n cancel"
+          footer={deleteLines.length
+            ? `y delete   n/Esc cancel${deleteMaxOffset ? '   ↑↓ review files' : ''}`
+            : 'y apply   n cancel'}
         />
       );
     } else if (overlay.kind === 'undo') {

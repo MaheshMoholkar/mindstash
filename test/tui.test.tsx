@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { render } from 'ink-testing-library';
 import { Fixture } from './fixture.js';
 import { scan } from '../src/core/scan.js';
+import { sanitizePath } from '../src/core/text.js';
 import { App } from '../src/tui/App.js';
 import type { Ui } from '../src/tui/types.js';
 
@@ -74,7 +75,7 @@ describe('full-screen UI', () => {
     expect(rowIdx).toBeGreaterThan(-1);
     // Move the cursor onto old-api (rows are sorted; search narrows it).
     await press('/', ...'old-api', KEY.enter, 'd');
-    expect(frame()).toContain('Apply 1 change?');
+    expect(frame()).toContain('Delete 1 file?');
     expect(frame()).toContain('CONFIRM');
     expect(existsSync(stale)).toBe(true);
     await press('y');
@@ -173,12 +174,41 @@ describe('full-screen UI', () => {
     expect(frame()).toContain('▌ 2 second-note   ·   d delete');
     expect(frame().match(/d delete/g)).toHaveLength(1);
     await press('d');
-    expect(frame()).toContain('Apply 1 change?');
+    expect(frame()).toContain('Delete 1 file?');
     expect(frame()).toContain('second-note');
     await press('y');
     await tick(200);
     expect(existsSync(second)).toBe(false);
     expect(existsSync(first)).toBe(true);
+  });
+
+  it('warns before deleting all files in a shared finding from Browse', async () => {
+    const gone = join(fx.home, 'old-project');
+    const first = fx.memory(gone, 'first-note.md', 'First note for the old project.');
+    const second = fx.memory(gone, 'second-note.md', 'Second note for the old project.');
+    const { press, frame } = await app({
+      ui: { entryKey: `scope:${sanitizePath(gone)}`, focus: 'main', cursor: 0, sidebarHidden: false },
+    });
+
+    await press('d');
+    expect(frame()).toContain('Delete all 2 files?');
+    expect(frame()).toMatch(/delete +first-note/);
+    expect(frame()).toContain('/first-note.md');
+    expect(frame()).toMatch(/delete +second-note/);
+    expect(frame()).toContain('/second-note.md');
+    expect(frame()).toContain('y delete n/Esc cancel');
+
+    await press(KEY.enter);
+    expect(frame()).toContain('Delete all 2 files?');
+    await press(KEY.esc);
+    expect(frame()).not.toContain('Delete all 2 files?');
+    expect(existsSync(first)).toBe(true);
+    expect(existsSync(second)).toBe(true);
+
+    await press('d', 'y');
+    await tick(200);
+    expect(existsSync(first)).toBe(false);
+    expect(existsSync(second)).toBe(false);
   });
 
   it('moves only the file picked inside a multi-file finding', async () => {

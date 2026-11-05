@@ -12,7 +12,7 @@ export interface Ui {
 }
 
 export type Overlay =
-  | { kind: 'confirm'; plan: Plan }
+  | { kind: 'confirm'; plan: Plan; offset?: number }
   | { kind: 'undo'; op: Operation }
   | { kind: 'help' }
   | { kind: 'palette'; query: string; cursor: number }
